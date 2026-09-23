@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Kvytok.Api/Kvytok.Api.csproj" />
+  </Folder>
+</Solution>
