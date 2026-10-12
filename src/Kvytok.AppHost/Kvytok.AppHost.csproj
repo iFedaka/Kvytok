@@ -1,0 +1,17 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.6.1">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Kvytok.Api\Kvytok.Api.csproj" />
+    <ProjectReference Include="..\Kvytok.Worker\Kvytok.Worker.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AspireUseCliBundle>true</AspireUseCliBundle>
+    <UserSecretsId>680c7d8c-640f-43d0-a310-d5e47d24b1e1</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

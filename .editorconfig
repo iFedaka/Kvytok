@@ -1,0 +1,4 @@
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:warning
+dotnet_style_namespace_match_folder = true
+dotnet_diagnostic.IDE0130.severity = warning
