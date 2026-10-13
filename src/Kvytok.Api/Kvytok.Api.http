@@ -1,6 +1,61 @@
-@Kvytok_Api_HostAddress = http://localhost:5224
+# Start the app first: dotnet run --project src/Kvytok.AppHost
+# Aspire serves the api on the ports from its first launch profile (https).
+# If the dashboard shows another address (e.g. an --isolated run), change this:
+@host = https://localhost:7096
 
-GET {{Kvytok_Api_HostAddress}}/weatherforecast/
-Accept: application/json
+### Service info
+GET {{host}}/
 
-###
+### Create an event with 200 seats
+# @name createEvent
+POST {{host}}/events
+Content-Type: application/json
+
+{
+  "name": "Kyiv Symphony Orchestra",
+  "startsAt": "{{$datetime iso8601 30 d}}",
+  "seatCount": 200
+}
+
+### Create an event with invalid input -> 400 with field errors
+POST {{host}}/events
+Content-Type: application/json
+
+{
+  "name": "",
+  "startsAt": "2020-01-01T19:00:00+00:00",
+  "seatCount": 0
+}
+
+### Get the event and its seat map
+@eventId = {{createEvent.response.body.$.eventId}}
+GET {{host}}/events/{{eventId}}
+
+### Get an event that does not exist -> 404
+GET {{host}}/events/00000000-0000-0000-0000-000000000000
+
+### Reserve seat 7
+# @name reserveSeat
+POST {{host}}/events/{{eventId}}/reservations
+Content-Type: application/json
+
+{
+  "seatNumber": 7,
+  "holderEmail": "first@example.com"
+}
+
+### Reserve the same seat again -> 409, someone got there first
+POST {{host}}/events/{{eventId}}/reservations
+Content-Type: application/json
+
+{
+  "seatNumber": 7,
+  "holderEmail": "second@example.com"
+}
+
+### Get the reservation
+@reservationId = {{reserveSeat.response.body.$.reservationId}}
+GET {{host}}/reservations/{{reservationId}}
+
+### OpenAPI document
+GET {{host}}/openapi/v1.json

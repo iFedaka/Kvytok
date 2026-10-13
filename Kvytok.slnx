@@ -6,4 +6,7 @@
     <Project Path="src/Kvytok.ServiceDefaults/Kvytok.ServiceDefaults.csproj" />
     <Project Path="src/Kvytok.Worker/Kvytok.Worker.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Kvytok.Api.Tests/Kvytok.Api.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -33,8 +33,10 @@ statements true in production rather than on a laptop.
 TODO: C4 container diagram (levels 1-2)
 
 **Api** — ASP.NET Core minimal APIs, organised as vertical slices: one folder per
-use case, each holding its endpoint, handler and data access. Optimistic concurrency
-on the seat row (`rowversion`) is what decides the winner of a contested seat.
+use case, each holding its endpoint, handler and data access. A contested seat is
+decided by a single conditional update (`SET Status = 'Held' WHERE Status = 'Free'`):
+SQL Server locks the row, so exactly one request changes it and the rest get `409`.
+Reservations carry a `rowversion`, since confirm, cancel and expire can race on them.
 
 **Worker** — a `BackgroundService` consuming the reservations queue: confirms paid
 reservations, expires unpaid ones. Idempotent by message key, with retry and a
