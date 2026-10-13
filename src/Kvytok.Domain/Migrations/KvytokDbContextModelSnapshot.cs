@@ -120,6 +120,15 @@ namespace Kvytok.Domain.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
+
+            modelBuilder.Entity("Kvytok.Domain.Seat", b =>
+                {
+                    b.HasOne("Kvytok.Domain.Event", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
 #pragma warning restore 612, 618
         }
     }

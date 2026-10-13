@@ -17,6 +17,7 @@ public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options) :
 
         model.Entity<Seat>(e =>
         {
+            e.HasOne<Event>().WithMany().HasForeignKey(x => x.EventId);
             e.HasKey(x => x.Id).IsClustered(false);
             e.HasIndex(x => new { x.EventId, x.Number }).IsUnique().IsClustered();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
