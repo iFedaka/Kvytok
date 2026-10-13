@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Kvytok.Api/Kvytok.Api.csproj" />
     <Project Path="src/Kvytok.AppHost/Kvytok.AppHost.csproj" />
+    <Project Path="src/Kvytok.Domain/Kvytok.Domain.csproj" />
     <Project Path="src/Kvytok.ServiceDefaults/Kvytok.ServiceDefaults.csproj" />
     <Project Path="src/Kvytok.Worker/Kvytok.Worker.csproj" />
   </Folder>
