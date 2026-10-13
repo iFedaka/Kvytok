@@ -10,7 +10,35 @@ operated on Azure.
 > asynchronous processing and cloud operations end to end, on a domain small enough
 > to read in one sitting.
 
-**Status:** work in progress. Done: TODO. Next: TODO.
+## Status
+
+Work in progress. [How it works](#how-it-works) describes the target design; this list
+shows what is built and what comes next.
+
+**Done**
+- [x] Aspire AppHost: Api, Worker and SQL Server (container locally)
+- [x] Domain model: events, seats, reservations; EF Core migrations; one active
+      reservation per seat enforced by a filtered unique index; `rowversion` on reservations
+- [x] Slices: create event, get event, reserve seat (conditional update → `409`), get reservation
+- [x] OpenAPI with a Scalar reference page
+- [x] Integration tests against a real SQL Server (Testcontainers)
+
+**Planned, in order**
+- [ ] GitHub Actions: build and tests, CI badge in this README
+- [ ] `azd up` to Azure Container Apps
+- [ ] Service Bus through Aspire; the Api publishes "reservation created"
+- [ ] Worker: confirms paid reservations, expires unpaid ones
+- [ ] Transactional outbox with EF Core
+- [ ] Duplicate detection and dead-letter queues; idempotent consumer with retry
+- [ ] Load test (k6 or NBomber): 200 parallel requests for one seat
+- [ ] Key Vault through Aspire, secrets reached via managed identity
+- [ ] Application Insights through Aspire: end-to-end distributed trace, custom metric and dashboard
+- [ ] Redis cache-aside
+- [ ] Health checks
+- [ ] Infrastructure as code in the repository
+- [ ] Seat-grid demo page
+- [ ] C4 diagram, levels 1–2
+- [ ] ADRs for the [Decisions](#decisions), in MADR format
 
 ## The problem
 
@@ -29,6 +57,8 @@ Everything else in this repository is the machinery required to make those three
 statements true in production rather than on a laptop.
 
 ## How it works
+
+This is the target design; see [Status](#status) for what's built.
 
 TODO: C4 container diagram (levels 1-2)
 
@@ -54,9 +84,13 @@ the queue boundary, health endpoints at `/health` and `/ready`.
 
 ## Decisions
 
-- [ADR-001](docs/adr/001-vertical-slices.md) — vertical slices rather than layers
-- [ADR-002](docs/adr/002-service-bus.md) — Service Bus rather than Storage Queues or Event Grid
-- [ADR-003](docs/adr/003-container-apps.md) — Container Apps rather than App Service or AKS
+- **Vertical slices rather than layers.** Each use case is one folder holding its
+  endpoint, handler and data access, so a change touches one place.
+- **Service Bus rather than Storage Queues or Event Grid.** Duplicate detection,
+  sessions and a built-in dead-letter queue; Storage Queues have none of these, and
+  Event Grid is for fan-out notifications, not work queues.
+- **Container Apps rather than App Service or AKS.** It runs the Api and a
+  queue-driven Worker side by side with scale-to-zero, without running a cluster.
 
 ## Results
 
