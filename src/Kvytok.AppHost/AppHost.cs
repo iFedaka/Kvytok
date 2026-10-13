@@ -8,7 +8,8 @@ var db  = sql.AddDatabase("kvytok");
 var api = builder
     .AddProject<Projects.Kvytok_Api>("api")
     .WithReference(db)
-    .WaitFor(db);
+    .WaitFor(db)
+    .WithUrlForEndpoint("https", _ => new() { Url = "/scalar", DisplayText = "Scalar" });
 builder
     .AddProject<Projects.Kvytok_Worker>("worker")
     .WithReference(db)
