@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run still in progress for it
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Kvytok.slnx
+
+      - name: Build
+        run: dotnet build Kvytok.slnx --configuration Release --no-restore
+
+      # Integration tests start SQL Server via Testcontainers; ubuntu runners ship with Docker
+      - name: Test
+        run: dotnet test --solution Kvytok.slnx --configuration Release --no-build
