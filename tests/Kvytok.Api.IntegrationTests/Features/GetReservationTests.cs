@@ -4,7 +4,7 @@ using Kvytok.Api.Features.GetReservation;
 using Kvytok.Api.Features.ReserveSeat;
 using Kvytok.Domain;
 
-namespace Kvytok.Api.Tests.Features;
+namespace Kvytok.Api.IntegrationTests.Features;
 
 public sealed class GetReservationTests(ApiFixture api)
 {

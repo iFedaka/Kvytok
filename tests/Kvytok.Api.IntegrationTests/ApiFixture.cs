@@ -10,9 +10,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using Testcontainers.MsSql;
 
-[assembly: AssemblyFixture(typeof(Kvytok.Api.Tests.ApiFixture))]
+[assembly: AssemblyFixture(typeof(Kvytok.Api.IntegrationTests.ApiFixture))]
 
-namespace Kvytok.Api.Tests;
+namespace Kvytok.Api.IntegrationTests;
 
 /// <summary>
 /// One SQL Server container and one in-process API for the whole test run.

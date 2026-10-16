@@ -5,7 +5,7 @@ using Kvytok.Domain;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
-namespace Kvytok.Api.Tests.Features;
+namespace Kvytok.Api.IntegrationTests.Features;
 
 public sealed class CreateEventTests(ApiFixture api)
 {
