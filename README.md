@@ -22,9 +22,9 @@ shows what is built and what comes next.
 - [x] Slices: create event, get event, reserve seat (conditional update → `409`), get reservation
 - [x] OpenAPI with a Scalar reference page
 - [x] Integration tests against a real SQL Server (Testcontainers)
+- [x] GitHub Actions: build and tests, CI badge in this README
 
 **Planned, in order**
-- [ ] GitHub Actions: build and tests, CI badge in this README
 - [ ] `azd up` to Azure Container Apps
 - [ ] Service Bus through Aspire; the Api publishes "reservation created"
 - [ ] Worker: confirms paid reservations, expires unpaid ones
