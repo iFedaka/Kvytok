@@ -4,7 +4,7 @@ Seat reservation for events with a fixed number of seats. A study in what happen
 when hundreds of requests compete for the same seat, and in how such a service is
 operated on Azure.
 
-**Live API:** https://TODO · **API reference:** https://TODO/scalar · ![CI](https://github.com/TODO/kvytok/actions/workflows/ci.yml/badge.svg)
+**Live API:** https://TODO · **API reference:** https://TODO/scalar · [![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
 
 > A portfolio project, not a product. It exists to demonstrate concurrency control,
 > asynchronous processing and cloud operations end to end, on a domain small enough
