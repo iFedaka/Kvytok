@@ -13,7 +13,7 @@ public sealed class DateTimeExampleSchemaTransformer : IOpenApiSchemaTransformer
     {
         var type = Nullable.GetUnderlyingType(context.JsonTypeInfo.Type) ?? context.JsonTypeInfo.Type;
         if (type == typeof(DateTimeOffset) || type == typeof(DateTime))
-            schema.Example = JsonValue.Create("2026-12-01T17:00:00Z");
+            schema.Examples = [JsonValue.Create("2026-12-01T17:00:00Z")];
 
         return Task.CompletedTask;
     }

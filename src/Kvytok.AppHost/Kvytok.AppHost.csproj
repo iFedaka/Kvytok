@@ -6,7 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.Azure.Sql" Version="13.6.1" />
+    <PackageReference Include="Aspire.Hosting.Azure.Sql" />
   </ItemGroup>
 
   <PropertyGroup>
