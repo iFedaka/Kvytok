@@ -239,7 +239,10 @@ and recovery needs the resource group, so the group has to come back briefly:
 
 ```powershell
 az group create -n rg-kvytok-dev -l swedencentral
-foreach ($w in "NAME1","NAME2") {
+$dead = az monitor log-analytics workspace list-deleted-workspaces `
+  --query "[?resourceGroup=='rg-kvytok-dev'].name" -o tsv
+
+foreach ($w in $dead) {
   az monitor log-analytics workspace recover -g rg-kvytok-dev -n $w
   az monitor log-analytics workspace delete -g rg-kvytok-dev -n $w --force true --yes
 }
