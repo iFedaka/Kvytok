@@ -3,9 +3,11 @@
   <ItemGroup>
     <ProjectReference Include="..\Kvytok.Api\Kvytok.Api.csproj" />
     <ProjectReference Include="..\Kvytok.Worker\Kvytok.Worker.csproj" />
+    <ProjectReference Include="..\Kvytok.MigrationService\Kvytok.MigrationService.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Azure.AppContainers" />
     <PackageReference Include="Aspire.Hosting.Azure.Sql" />
   </ItemGroup>
 

@@ -4,7 +4,7 @@ Seat reservation for events with a fixed number of seats. A study in what happen
 when hundreds of requests compete for the same seat, and in how such a service is
 operated on Azure.
 
-**Live API:** https://TODO · **API reference:** https://TODO/scalar · [![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
+**Live API:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/ · **API reference:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/scalar · [![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
 
 > A portfolio project, not a product. It exists to demonstrate concurrency control,
 > asynchronous processing and cloud operations end to end, on a domain small enough
@@ -23,9 +23,12 @@ shows what is built and what comes next.
 - [x] OpenAPI with a Scalar reference page
 - [x] Integration tests against a real SQL Server (Testcontainers)
 - [x] GitHub Actions: build and tests, CI badge in this README
+- [x] Deployed to Azure Container Apps with `azd`; see the [deployment runbook](docs/deploy.md)
+- [x] Migrations as a separate Container Apps job, run by azd after each deploy
+- [x] Health checks on a separate port behind a key, used by the platform's liveness and readiness probes
+- [x] Infrastructure as code in the repository (Bicep generated from the AppHost)
 
 **Planned, in order**
-- [ ] `azd up` to Azure Container Apps
 - [ ] Service Bus through Aspire; the Api publishes "reservation created"
 - [ ] Worker: confirms paid reservations, expires unpaid ones
 - [ ] Transactional outbox with EF Core
@@ -34,8 +37,6 @@ shows what is built and what comes next.
 - [ ] Key Vault through Aspire, secrets reached via managed identity
 - [ ] Application Insights through Aspire: end-to-end distributed trace, custom metric and dashboard
 - [ ] Redis cache-aside
-- [ ] Health checks
-- [ ] Infrastructure as code in the repository
 - [ ] Seat-grid demo page
 - [ ] C4 diagram, levels 1–2
 - [ ] ADRs for the [Decisions](#decisions), in MADR format
@@ -80,7 +81,8 @@ message contract and nothing else.
 
 **Operations** — secrets in Key Vault reached through a managed identity, Redis for
 cache-aside on the event list, Application Insights with distributed tracing across
-the queue boundary, health endpoints at `/health` and `/ready`.
+the queue boundary, health endpoints `/health` and `/alive` on a port the public
+ingress does not route to.
 
 ## Decisions
 
@@ -123,8 +125,9 @@ azd auth login
 azd up
 ```
 
-This provisions everything in `infra/` (Bicep) and deploys both services. Takes about
-TODO minutes. `azd down` removes it all; running cost is roughly TODO per month, most
+This provisions everything in `infra/` (Bicep), deploys the Api and the Worker, and
+runs the migrations job. Takes about 6 minutes: roughly 5 to provision, under 1 to
+deploy. `azd down` removes it all; running cost is roughly TODO per month, most
 of which is Redis and Service Bus.
 
 ## Not in scope

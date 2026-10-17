@@ -1,0 +1,10 @@
+using './migrator-containerapp.module.bicep'
+
+param aspire_env_outputs_azure_container_apps_environment_default_domain = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}'
+param aspire_env_outputs_azure_container_apps_environment_id = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_APPS_ENVIRONMENT_ID }}'
+param aspire_env_outputs_azure_container_registry_endpoint = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT }}'
+param aspire_env_outputs_azure_container_registry_managed_identity_id = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID }}'
+param migrator_containerimage = '{{ .Image }}'
+param migrator_identity_outputs_clientid = '{{ .Env.MIGRATOR_IDENTITY_CLIENTID }}'
+param migrator_identity_outputs_id = '{{ .Env.MIGRATOR_IDENTITY_ID }}'
+param sql_outputs_sqlserverfqdn = '{{ .Env.SQL_SQLSERVERFQDN }}'

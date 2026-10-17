@@ -5,6 +5,7 @@ using Kvytok.Api.Features.CreateEvent;
 using Kvytok.Domain;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
@@ -37,9 +38,15 @@ public sealed class ApiFixture : IAsyncLifetime
     {
         await _sql.StartAsync();
 
+        // In the app the migrator resource does this; the API no longer migrates on startup
+        await using (var db = new KvytokDbContext(new DbContextOptionsBuilder<KvytokDbContext>()
+                         .UseSqlServer(_sql.GetConnectionString()).Options))
+        {
+            await db.Database.MigrateAsync();
+        }
+
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            // Development applies migrations on startup
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:kvytok", _sql.GetConnectionString());
             builder.ConfigureServices(services => services.Replace(ServiceDescriptor.Singleton<TimeProvider>(Clock)));

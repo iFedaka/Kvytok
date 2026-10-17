@@ -1,5 +1,9 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
@@ -17,6 +21,9 @@ public static class Extensions
 {
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
+    private const string HealthChecksPortKey = "HealthChecks:Port";
+    private const string HealthChecksProbeKeyKey = "HealthChecks:ProbeKey";
+    private const string ProbeKeyHeader = "X-Health-Probe-Key";
 
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
@@ -108,20 +115,54 @@ public static class Extensions
 
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        // Adding health checks endpoints to applications in non-development environments has security implications.
-        // See https://aka.ms/aspire/healthchecks for details before enabling these endpoints in non-development environments.
+        // Only health checks tagged with the "live" tag must pass for app to be considered alive
+        var aliveOptions = new HealthCheckOptions { Predicate = r => r.Tags.Contains("live") };
+
         if (app.Environment.IsDevelopment())
         {
             // All health checks must pass for app to be considered ready to accept traffic after starting
             app.MapHealthChecks(HealthEndpointPath);
+            app.MapHealthChecks(AlivenessEndpointPath, aliveOptions);
+        }
+        else if (app.Configuration.GetValue<int?>(HealthChecksPortKey) is { } port
+                 && app.Configuration[HealthChecksProbeKeyKey] is { Length: > 0 } probeKey)
+        {
+            // Elsewhere they answer only on a dedicated port that ingress does not route to, and only to callers
+            // presenting the probe key, so platform probes reach them and the public does not.
+            // See https://aka.ms/aspire/healthchecks.
+            // Matched on the connection's local port: RequireHost would trust the client-supplied Host header.
+            var expectedKey = Encoding.UTF8.GetBytes(probeKey);
+            app.UseWhen(
+                context => context.Connection.LocalPort == port,
+                probe =>
+                {
+                    probe.Use(async (context, next) =>
+                    {
+                        if (!HasProbeKey(context, expectedKey))
+                        {
+                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                            context.Response.Headers.WWWAuthenticate = "Key";
+                            return;
+                        }
+                        await next();
+                    });
 
-            // Only health checks tagged with the "live" tag must pass for app to be considered alive
-            app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
-            {
-                Predicate = r => r.Tags.Contains("live")
-            });
+                    probe.UseHealthChecks(HealthEndpointPath);
+                    probe.UseHealthChecks(AlivenessEndpointPath, aliveOptions);
+
+                    // The branch ends here: the port yields exactly two paths and nothing more.
+                    probe.Run(context =>
+                    {
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                        return Task.CompletedTask;
+                    });
+                });
         }
 
         return app;
     }
+
+    private static bool HasProbeKey(HttpContext context, byte[] expectedKey) =>
+        context.Request.Headers[ProbeKeyHeader] is [{ } key]
+        && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(key), expectedKey);
 }

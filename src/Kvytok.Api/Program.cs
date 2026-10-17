@@ -1,7 +1,6 @@
 using System.Reflection;
 using System.Text.Json.Serialization;
 using Kvytok.Domain;
-using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,21 +20,12 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 
-if (app.Environment.IsDevelopment())
-{
-    await using var scope = app.Services.CreateAsyncScope();
-    var db = scope.ServiceProvider.GetRequiredService<KvytokDbContext>();
-    await db.Database.MigrateAsync();
-}
-
 app.MapDefaultEndpoints();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.MapScalarApiReference();
-}
+app.MapOpenApi();
+app.MapScalarApiReference();
+
 
 app.UseHttpsRedirection();
 
@@ -46,7 +36,6 @@ app.MapGet("/", () => TypedResults.Ok(new
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
         docs = "/scalar",
         openapi = "/openapi/v1.json",
-        health = "/health"
     }))
    .ExcludeFromDescription();
 

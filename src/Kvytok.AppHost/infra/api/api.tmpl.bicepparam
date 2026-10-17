@@ -1,0 +1,12 @@
+using './api-containerapp.module.bicep'
+
+param api_containerimage = '{{ .Image }}'
+param api_containerport = '{{ targetPortOrDefault 8080 }}'
+param api_identity_outputs_clientid = '{{ .Env.API_IDENTITY_CLIENTID }}'
+param api_identity_outputs_id = '{{ .Env.API_IDENTITY_ID }}'
+param aspire_env_outputs_azure_container_apps_environment_default_domain = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN }}'
+param aspire_env_outputs_azure_container_apps_environment_id = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_APPS_ENVIRONMENT_ID }}'
+param aspire_env_outputs_azure_container_registry_endpoint = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT }}'
+param aspire_env_outputs_azure_container_registry_managed_identity_id = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID }}'
+param health_probe_key = '{{ securedParameter "health_probe_key" }}'
+param sql_outputs_sqlserverfqdn = '{{ .Env.SQL_SQLSERVERFQDN }}'

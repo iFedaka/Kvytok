@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: kvytok
+services:
+  app:
+    language: dotnet
+    project: ./src/Kvytok.AppHost/Kvytok.AppHost.csproj
+    host: containerapp
+hooks:
+  # The migrator is a manually triggered job, so azd deploys it but never runs it
+  postdeploy:
+    shell: pwsh
+    run: ./scripts/run-migrations.ps1
+    continueOnError: false
+    interactive: false
