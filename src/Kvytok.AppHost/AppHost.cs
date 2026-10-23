@@ -15,6 +15,9 @@ var migrator = builder
     .WaitFor(db)
     .PublishAsAzureContainerAppJob();
 
+var serviceBus = builder.AddAzureServiceBus("messaging");
+var reservationsQueue = serviceBus.AddServiceBusQueue("reservations");
+
 // Shared secret the platform's probes send to /health and /alive; generated once, then kept in the azd environment
 var healthProbeKey = builder.AddParameter(
     "health-probe-key", new GenerateParameterDefault { MinLength = 32, Special = false }, secret: true, persist: true);
@@ -22,6 +25,7 @@ var healthProbeKey = builder.AddParameter(
 builder
     .AddProject<Projects.Kvytok_Api>("api")
     .WithReference(db)
+    .WithReference(reservationsQueue)
     .WaitForCompletion(migrator)
     .WithUrlForEndpoint("https", _ => new() { Url = "/scalar", DisplayText = "Scalar" })
     .WithExternalHttpEndpoints()
@@ -34,6 +38,7 @@ builder
 builder
     .AddProject<Projects.Kvytok_Worker>("worker")
     .WithReference(db)
+    .WithReference(reservationsQueue)
     .WaitForCompletion(migrator)
     .PublishAsAzureContainerApp((infra, app) =>
     {
