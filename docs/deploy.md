@@ -264,7 +264,7 @@ Listed so a reader does not mistake these for oversights.
 
 **Migrations run after the new code, not before it.** They live in their own
 project, `Kvytok.MigrationService`, deployed as the `migrator` Container Apps job
-and started by the azd `postdeploy` hook (`scripts/run-migrations.ps1`), which
+and started by the azd `postdeploy` hook (`scripts/run-migrations.sh`, or `.ps1` on Windows), which
 fails the deploy if the job does not succeed. Because the hook runs after azd has
 deployed every service, new API and worker revisions are briefly live against the
 old schema. Fine while every migration is additive; a breaking one needs the

@@ -8,8 +8,15 @@ services:
     host: containerapp
 hooks:
   # The migrator is a manually triggered job, so azd deploys it but never runs it
+  # Both scripts do the same thing; keep them in step
   postdeploy:
-    shell: pwsh
-    run: ./scripts/run-migrations.ps1
-    continueOnError: false
-    interactive: false
+    windows:
+      shell: pwsh
+      run: ./scripts/run-migrations.ps1
+      continueOnError: false
+      interactive: false
+    posix:
+      shell: sh
+      run: ./scripts/run-migrations.sh
+      continueOnError: false
+      interactive: false
