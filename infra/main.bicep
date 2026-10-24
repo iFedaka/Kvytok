@@ -37,6 +37,15 @@ module api_identity 'api-identity/api-identity.module.bicep' = {
     location: location
   }
 }
+module api_roles_messaging 'api-roles-messaging/api-roles-messaging.module.bicep' = {
+  name: 'api-roles-messaging'
+  scope: rg
+  params: {
+    location: location
+    messaging_outputs_name: messaging.outputs.name
+    principalId: api_identity.outputs.principalId
+  }
+}
 module api_roles_sql 'api-roles-sql/api-roles-sql.module.bicep' = {
   name: 'api-roles-sql'
   scope: rg
@@ -59,6 +68,13 @@ module aspire_env 'aspire-env/aspire-env.module.bicep' = {
 }
 module aspire_env_acr 'aspire-env-acr/aspire-env-acr.module.bicep' = {
   name: 'aspire-env-acr'
+  scope: rg
+  params: {
+    location: location
+  }
+}
+module messaging 'messaging/messaging.module.bicep' = {
+  name: 'messaging'
   scope: rg
   params: {
     location: location
@@ -96,6 +112,15 @@ module worker_identity 'worker-identity/worker-identity.module.bicep' = {
     location: location
   }
 }
+module worker_roles_messaging 'worker-roles-messaging/worker-roles-messaging.module.bicep' = {
+  name: 'worker-roles-messaging'
+  scope: rg
+  params: {
+    location: location
+    messaging_outputs_name: messaging.outputs.name
+    principalId: worker_identity.outputs.principalId
+  }
+}
 module worker_roles_sql 'worker-roles-sql/worker-roles-sql.module.bicep' = {
   name: 'worker-roles-sql'
   scope: rg
@@ -115,6 +140,8 @@ output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.
 output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID
 output AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN string = aspire_env.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT
+output MESSAGING_SERVICEBUSENDPOINT string = messaging.outputs.serviceBusEndpoint
+output MESSAGING_SERVICEBUSHOSTNAME string = messaging.outputs.serviceBusHostName
 output MIGRATOR_IDENTITY_CLIENTID string = migrator_identity.outputs.clientId
 output MIGRATOR_IDENTITY_ID string = migrator_identity.outputs.id
 output SQL_SQLSERVERFQDN string = sql.outputs.sqlServerFqdn

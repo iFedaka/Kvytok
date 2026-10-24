@@ -11,6 +11,10 @@ param worker_identity_outputs_id string
 
 param sql_outputs_sqlserverfqdn string
 
+param messaging_outputs_servicebusendpoint string
+
+param messaging_outputs_servicebushostname string
+
 param worker_identity_outputs_clientid string
 
 param aspire_env_outputs_azure_container_registry_endpoint string
@@ -69,6 +73,22 @@ resource worker 'Microsoft.App/containerApps@2025-10-02-preview' = {
             {
               name: 'KVYTOK_DATABASENAME'
               value: 'kvytok'
+            }
+            {
+              name: 'ConnectionStrings__reservations'
+              value: 'Endpoint=${messaging_outputs_servicebusendpoint};EntityPath=reservations'
+            }
+            {
+              name: 'RESERVATIONS_HOST'
+              value: messaging_outputs_servicebushostname
+            }
+            {
+              name: 'RESERVATIONS_URI'
+              value: messaging_outputs_servicebusendpoint
+            }
+            {
+              name: 'RESERVATIONS_QUEUENAME'
+              value: 'reservations'
             }
             {
               name: 'AZURE_CLIENT_ID'

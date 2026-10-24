@@ -9,4 +9,6 @@ param aspire_env_outputs_azure_container_apps_environment_id = '{{ .Env.ASPIRE_E
 param aspire_env_outputs_azure_container_registry_endpoint = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT }}'
 param aspire_env_outputs_azure_container_registry_managed_identity_id = '{{ .Env.ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID }}'
 param health_probe_key = '{{ securedParameter "health_probe_key" }}'
+param messaging_outputs_servicebusendpoint = '{{ .Env.MESSAGING_SERVICEBUSENDPOINT }}'
+param messaging_outputs_servicebushostname = '{{ .Env.MESSAGING_SERVICEBUSHOSTNAME }}'
 param sql_outputs_sqlserverfqdn = '{{ .Env.SQL_SQLSERVERFQDN }}'
