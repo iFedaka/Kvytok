@@ -1,5 +1,8 @@
 using System.Net.Mail;
+using System.Text.Json;
+using Azure.Messaging.ServiceBus;
 using Kvytok.Domain;
+using Kvytok.Contracts;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -13,6 +16,7 @@ public sealed record ReserveSeatResponse(Guid ReservationId, DateTimeOffset Expi
 public sealed class ReserveSeatEndpoint : IEndpoint
 {
     private static readonly TimeSpan HoldDuration = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan PublishTimeout = TimeSpan.FromSeconds(10);
     private const int MaxEmailLength = 254;
 
     // SQL Server error numbers
@@ -30,6 +34,8 @@ public sealed class ReserveSeatEndpoint : IEndpoint
         ReserveSeatRequest request,
         KvytokDbContext db,
         TimeProvider clock,
+        ServiceBusSender reservationsQueue,
+        ILogger<ReserveSeatEndpoint> logger,
         CancellationToken cancellationToken)
     {
         var errors = Validate(request);
@@ -39,11 +45,17 @@ public sealed class ReserveSeatEndpoint : IEndpoint
         // Aspire turns on retry-on-failure, which only allows an explicit transaction
         // inside the execution strategy; each attempt runs the whole unit again.
         var strategy = db.Database.CreateExecutionStrategy();
-        return await strategy.ExecuteAsync(
+        var (result, created) = await strategy.ExecuteAsync(
             () => Reserve(db, eventId, request, clock.GetUtcNow(), cancellationToken));
+
+        // Published outside the strategy so a retried attempt can never send twice
+        if (created is not null)
+            await Publish(reservationsQueue, logger, created);
+
+        return result;
     }
 
-    private static async Task<Results<Created<ReserveSeatResponse>, ValidationProblem, NotFound, Conflict<ProblemDetails>>> Reserve(
+    private static async Task<(Results<Created<ReserveSeatResponse>, ValidationProblem, NotFound, Conflict<ProblemDetails>> Result, ReservationCreated? Created)> Reserve(
         KvytokDbContext db,
         Guid eventId,
         ReserveSeatRequest request,
@@ -64,9 +76,9 @@ public sealed class ReserveSeatEndpoint : IEndpoint
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SeatStatus.Held), cancellationToken);
         if (held == 0)
         {
-            return await seat.AnyAsync(cancellationToken)
+            return (await seat.AnyAsync(cancellationToken)
                 ? SeatTaken(request.SeatNumber)
-                : TypedResults.NotFound();
+                : TypedResults.NotFound(), null);
         }
 
         // we hold the row's exclusive lock until commit, so this cannot change under us
@@ -90,13 +102,40 @@ public sealed class ReserveSeatEndpoint : IEndpoint
         {
             // the filtered unique index on SeatId: the seat was 'Free' but still had an
             // active reservation. The data is inconsistent; refuse rather than double-book.
-            return SeatTaken(request.SeatNumber);
+            return (SeatTaken(request.SeatNumber), null);
         }
 
         await transaction.CommitAsync(cancellationToken);
 
-        return TypedResults.Created($"/reservations/{reservation.Id}",
-            new ReserveSeatResponse(reservation.Id, reservation.ExpiresAt));
+        return (TypedResults.Created($"/reservations/{reservation.Id}",
+                new ReserveSeatResponse(reservation.Id, reservation.ExpiresAt)),
+            new ReservationCreated(reservation.Id, eventId, seatId, request.SeatNumber, reservation.ExpiresAt));
+    }
+
+    // The hold is already committed when this runs, so a failed send must not turn it
+    // into an error: the seat is held either way. Until the transactional outbox lands,
+    // such a message is lost and only the log records it.
+    private static async Task Publish(ServiceBusSender queue, ILogger logger, ReservationCreated created)
+    {
+        var message = new ServiceBusMessage(BinaryData.FromObjectAsJson(created, JsonSerializerOptions.Web))
+        {
+            MessageId = created.ReservationId.ToString(),
+            Subject = nameof(ReservationCreated),
+            ContentType = "application/json",
+        };
+
+        try
+        {
+            // Not the request's token: a client that hangs up after the commit still holds
+            // the seat. Bounded, so a broker outage cannot stall the response for minutes.
+            using var timeout = new CancellationTokenSource(PublishTimeout);
+            await queue.SendMessageAsync(message, timeout.Token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Reservation {ReservationId} was created but {Message} was not published",
+                created.ReservationId, nameof(ReservationCreated));
+        }
     }
 
     private static Conflict<ProblemDetails> SeatTaken(int seatNumber) =>

@@ -4,6 +4,7 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="Aspire.Azure.Messaging.ServiceBus" Version="13.6.3" />
     <PackageVersion Include="Aspire.Hosting.Azure.AppContainers" Version="13.6.3" />
     <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.6.3" />
     <PackageVersion Include="Aspire.Hosting.Azure.Sql" Version="13.6.3" />

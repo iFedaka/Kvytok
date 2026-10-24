@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.CreateEvent;
 using Kvytok.Domain;
 using Microsoft.AspNetCore.Hosting;
@@ -32,6 +33,8 @@ public sealed class ApiFixture : IAsyncLifetime
         Converters = { new JsonStringEnumConverter() },
     };
 
+    public RecordingSender ReservationsQueue { get; } = new();
+
     public HttpClient Client { get; private set; } = null!;
 
     public async ValueTask InitializeAsync()
@@ -49,7 +52,14 @@ public sealed class ApiFixture : IAsyncLifetime
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:kvytok", _sql.GetConnectionString());
-            builder.ConfigureServices(services => services.Replace(ServiceDescriptor.Singleton<TimeProvider>(Clock)));
+            // never connected to: the sender built from it is replaced below
+            builder.UseSetting("ConnectionStrings:reservations",
+                "Endpoint=sb://localhost/;SharedAccessKeyName=test;SharedAccessKey=test;EntityPath=reservations");
+            builder.ConfigureServices(services =>
+            {
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(Clock));
+                services.Replace(ServiceDescriptor.Singleton<ServiceBusSender>(ReservationsQueue));
+            });
         });
 
         Client = _factory.CreateClient();

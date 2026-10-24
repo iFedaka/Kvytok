@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.ReserveSeat;
 using Kvytok.Domain;
+using Kvytok.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,6 +32,43 @@ public sealed class ReserveSeatTests(ApiFixture api)
         Assert.Equal(seat.Id, reservation.SeatId);
         Assert.Equal(ReservationStatus.Held, reservation.Status);
         Assert.Equal("holder@example.com", reservation.HolderEmail);
+    }
+
+    [Fact]
+    public async Task Publishes_ReservationCreated_After_The_Hold_Is_Committed()
+    {
+        var eventId = await api.CreateEventAsync();
+
+        var response = await ReserveAsync(eventId, 7, "holder@example.com");
+
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(
+            ApiFixture.Json,
+            TestContext.Current.CancellationToken);
+        var message = Assert.Single(SentFor(eventId));
+        Assert.Equal(body!.ReservationId.ToString(), message.MessageId);
+        Assert.Equal(nameof(ReservationCreated), message.Subject);
+        Assert.Equal("application/json", message.ContentType);
+
+        var seatId = await api.WithDbAsync(db => db.Seats
+            .Where(s => s.EventId == eventId && s.Number == 7)
+            .Select(s => s.Id)
+            .SingleAsync());
+        Assert.Equal(
+            new ReservationCreated(body.ReservationId, eventId, seatId, 7, body.ExpiresAt),
+            message.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json));
+    }
+
+    [Fact]
+    public async Task Publishes_Nothing_When_The_Seat_Is_Taken()
+    {
+        var eventId = await api.CreateEventAsync();
+        (await ReserveAsync(eventId, 7, "first@example.com")).EnsureSuccessStatusCode();
+        var publishedByFirst = SentFor(eventId).Count();
+
+        var response = await ReserveAsync(eventId, 7, "second@example.com");
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(publishedByFirst, SentFor(eventId).Count());
     }
 
     [Fact]
@@ -81,6 +120,7 @@ public sealed class ReserveSeatTests(ApiFixture api)
         var reservations = await api.WithDbAsync(db => db.Reservations
             .CountAsync(r => db.Seats.Any(s => s.Id == r.SeatId && s.EventId == eventId)));
         Assert.Equal(1, reservations);
+        Assert.Single(SentFor(eventId));
     }
 
     [Fact]
@@ -144,6 +184,11 @@ public sealed class ReserveSeatTests(ApiFixture api)
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    // the sender is shared by the whole run, so pick out this test's event
+    private IEnumerable<ServiceBusMessage> SentFor(Guid eventId) =>
+        api.ReservationsQueue.Sent.Where(m =>
+            m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
 
     private Task<HttpResponseMessage> ReserveAsync(Guid eventId, int seatNumber, string email) =>
         api.Client.PostAsJsonAsync($"/events/{eventId}/reservations",

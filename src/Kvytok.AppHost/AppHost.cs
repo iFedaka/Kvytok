@@ -22,7 +22,7 @@ var reservationsQueue = serviceBus.AddServiceBusQueue("reservations");
 var healthProbeKey = builder.AddParameter(
     "health-probe-key", new GenerateParameterDefault { MinLength = 32, Special = false }, secret: true, persist: true);
 
-builder
+var api = builder
     .AddProject<Projects.Kvytok_Api>("api")
     .WithReference(db)
     .WithReference(reservationsQueue)
@@ -35,7 +35,7 @@ builder
         app.Template.Scale.MaxReplicas = 3;
         app.ExposeHealthChecksToProbes(infra, healthProbeKey);
     });
-builder
+var worker = builder
     .AddProject<Projects.Kvytok_Worker>("worker")
     .WithReference(db)
     .WithReference(reservationsQueue)
@@ -45,5 +45,13 @@ builder
         app.Template.Scale.MinReplicas = 0;
         app.Template.Scale.MaxReplicas = 1;
     });
+
+// Locally the services reach Azure as the developer (az or azd login). Managed identity
+// exists only in Azure, and probing for it on a laptop can hang for minutes.
+if (builder.ExecutionContext.IsRunMode)
+{
+    api.WithEnvironment("AZURE_TOKEN_CREDENTIALS", "dev");
+    worker.WithEnvironment("AZURE_TOKEN_CREDENTIALS", "dev");
+}
 
 builder.Build().Run();

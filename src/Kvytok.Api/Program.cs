@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json.Serialization;
+using Azure.Messaging.ServiceBus;
 using Kvytok.Domain;
 using Scalar.AspNetCore;
 
@@ -12,6 +13,14 @@ builder.Services.AddExceptionHandler<BadRequestExceptionHandler>();
 // throw on binding failures in every environment so BadRequestExceptionHandler can describe them
 builder.Services.Configure<RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
 builder.AddSqlServerDbContext<KvytokDbContext>("kvytok");
+
+// The Azure SDK emits Service Bus spans only behind this switch; without it the send
+// is missing from the trace. Must be set before the client is added.
+AppContext.SetSwitch("Azure.Experimental.EnableActivitySource", true);
+// "reservations" is the queue reference, so the connection string carries the queue as EntityPath
+string? reservationsQueue = null;
+builder.AddAzureServiceBusClient("reservations", s => reservationsQueue = s.QueueOrTopicName);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<ServiceBusClient>().CreateSender(reservationsQueue));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpoints(typeof(Program).Assembly);
