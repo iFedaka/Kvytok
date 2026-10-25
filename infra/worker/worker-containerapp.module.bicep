@@ -17,6 +17,8 @@ param messaging_outputs_servicebushostname string
 
 param worker_identity_outputs_clientid string
 
+param messaging_outputs_name string
+
 param aspire_env_outputs_azure_container_registry_endpoint string
 
 param aspire_env_outputs_azure_container_registry_managed_identity_id string
@@ -104,6 +106,21 @@ resource worker 'Microsoft.App/containerApps@2025-10-02-preview' = {
       scale: {
         minReplicas: 0
         maxReplicas: 1
+        pollingInterval: 10
+        rules: [
+          {
+            name: 'reservations-queue'
+            custom: {
+              type: 'azure-servicebus'
+              metadata: {
+                namespace: messaging_outputs_name
+                queueName: 'reservations'
+                messageCount: '1'
+              }
+              identity: worker_identity_outputs_id
+            }
+          }
+        ]
       }
     }
   }

@@ -145,6 +145,10 @@ resource api 'Microsoft.App/containerApps@2025-10-02-preview' = {
               value: 'reservations'
             }
             {
+              name: 'Reservation__HoldFor'
+              value: '00:00:30'
+            }
+            {
               name: 'AZURE_CLIENT_ID'
               value: api_identity_outputs_clientid
             }

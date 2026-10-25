@@ -140,6 +140,7 @@ output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.
 output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID
 output AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN string = aspire_env.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT
+output MESSAGING_NAME string = messaging.outputs.name
 output MESSAGING_SERVICEBUSENDPOINT string = messaging.outputs.serviceBusEndpoint
 output MESSAGING_SERVICEBUSHOSTNAME string = messaging.outputs.serviceBusHostName
 output MIGRATOR_IDENTITY_CLIENTID string = migrator_identity.outputs.clientId
