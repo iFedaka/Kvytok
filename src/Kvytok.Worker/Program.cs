@@ -5,7 +5,8 @@ using Kvytok.Worker;
 var builder = Host.CreateApplicationBuilder(args);
 
 builder.AddServiceDefaults();
-builder.AddSqlServerDbContext<KvytokDbContext>("kvytok");
+builder.AddSqlServerDbContext<KvytokDbContext>("kvytok",
+    configureDbContextOptions: o => o.AddKvytokInterceptors());
 
 // Must be set before the client is added, or the receive is missing from the trace
 AppContext.SetSwitch("Azure.Experimental.EnableActivitySource", true);

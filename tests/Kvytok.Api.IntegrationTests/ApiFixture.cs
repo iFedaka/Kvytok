@@ -42,9 +42,11 @@ public sealed class ApiFixture : IAsyncLifetime
     {
         await _sql.StartAsync();
 
-        // In the app the migrator resource does this; the API no longer migrates on startup
+        // In the app the migrator resource does this
         await using (var db = new KvytokDbContext(new DbContextOptionsBuilder<KvytokDbContext>()
-                         .UseSqlServer(_sql.GetConnectionString()).Options))
+                         .UseSqlServer(_sql.GetConnectionString())
+                         .AddKvytokInterceptors()
+                         .Options))
         {
             await db.Database.MigrateAsync();
         }

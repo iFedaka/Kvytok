@@ -76,6 +76,52 @@ public sealed class ReserveSeatTests(ApiFixture api)
     }
 
     [Fact]
+    public async Task Writes_Both_Messages_To_The_Outbox_And_Marks_Them_Published()
+    {
+        var eventId = await api.CreateEventAsync();
+
+        var response = await ReserveAsync(eventId, 7, "holder@example.com");
+
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(
+            ApiFixture.Json,
+            TestContext.Current.CancellationToken);
+        var rows = await OutboxFor(body!.ReservationId);
+        Assert.Equal(
+            [body.ReservationId.ToString(), $"{body.ReservationId}:expiry"],
+            rows.Select(r => r.MessageId));
+        Assert.All(rows, r => Assert.Equal(api.Clock.GetUtcNow(), r.PublishedAt));
+
+        var created = rows.Single(r => r.Subject == nameof(ReservationCreated));
+        Assert.Null(created.DeliverAt);
+        var expiry = rows.Single(r => r.Subject == nameof(ReservationExpiryDue));
+        // the hold's own end, not a delay counted from whenever the message is sent
+        Assert.Equal(body.ExpiresAt, expiry.DeliverAt);
+    }
+
+    [Fact]
+    public async Task Keeps_The_Hold_And_Leaves_The_Messages_Owed_When_The_Publish_Fails()
+    {
+        var eventId = await api.CreateEventAsync();
+        api.ReservationsQueue.FailWhen(m =>
+            m.Subject == nameof(ReservationCreated)
+            && m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
+
+        var response = await ReserveAsync(eventId, 7, "holder@example.com");
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(
+            ApiFixture.Json,
+            TestContext.Current.CancellationToken);
+        Assert.Empty(SentFor(eventId));
+        // the batch is atomic: the expiry was not sent without its event either
+        Assert.DoesNotContain(api.ReservationsQueue.Sent, m => m.MessageId == $"{body!.ReservationId}:expiry");
+
+        var rows = await OutboxFor(body!.ReservationId);
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Null(r.PublishedAt));
+    }
+
+    [Fact]
     public async Task Publishes_Nothing_When_The_Seat_Is_Taken()
     {
         var eventId = await api.CreateEventAsync();
@@ -86,6 +132,8 @@ public sealed class ReserveSeatTests(ApiFixture api)
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal(publishedByFirst, SentFor(eventId).Count());
+        // only the first reservation's two rows exist
+        Assert.Equal(2, await OutboxCountFor(eventId));
     }
 
     [Fact]
@@ -138,6 +186,7 @@ public sealed class ReserveSeatTests(ApiFixture api)
             .CountAsync(r => db.Seats.Any(s => s.Id == r.SeatId && s.EventId == eventId)));
         Assert.Equal(1, reservations);
         Assert.Single(SentFor(eventId));
+        Assert.Equal(2, await OutboxCountFor(eventId));
     }
 
     [Fact]
@@ -207,6 +256,18 @@ public sealed class ReserveSeatTests(ApiFixture api)
         api.ReservationsQueue.Sent.Where(m =>
             m.Subject == nameof(ReservationCreated)
             && m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
+
+    private Task<List<OutboxMessage>> OutboxFor(Guid reservationId) =>
+        api.WithDbAsync(db => db.OutboxMessages
+            .Where(m => m.MessageId.StartsWith(reservationId.ToString()))
+            .OrderBy(m => m.Id)
+            .ToListAsync());
+
+    // only ReservationCreated names the event, so count the reservations whose event it is
+    private Task<int> OutboxCountFor(Guid eventId) =>
+        api.WithDbAsync(db => db.OutboxMessages.CountAsync(m => db.Reservations
+            .Any(r => m.MessageId.StartsWith(r.Id.ToString())
+                      && db.Seats.Any(s => s.Id == r.SeatId && s.EventId == eventId))));
 
     private Task<HttpResponseMessage> ReserveAsync(Guid eventId, int seatNumber, string email) =>
         api.Client.PostAsJsonAsync($"/events/{eventId}/reservations",

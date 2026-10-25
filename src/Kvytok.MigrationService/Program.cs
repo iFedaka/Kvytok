@@ -3,7 +3,8 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.AddServiceDefaults();
-builder.AddSqlServerDbContext<KvytokDbContext>("kvytok");
+builder.AddSqlServerDbContext<KvytokDbContext>("kvytok",
+    configureDbContextOptions: o => o.AddKvytokInterceptors());
 
 using var host = builder.Build();
 

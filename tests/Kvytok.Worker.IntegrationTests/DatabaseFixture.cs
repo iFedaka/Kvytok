@@ -27,6 +27,7 @@ public sealed class DatabaseFixture : IAsyncLifetime
     public KvytokDbContext CreateDb(params IInterceptor[] interceptors) =>
         new(new DbContextOptionsBuilder<KvytokDbContext>()
             .UseSqlServer(_sql.GetConnectionString(), sql => sql.EnableRetryOnFailure())
+            .AddKvytokInterceptors()
             .AddInterceptors(interceptors)
             .Options);
 

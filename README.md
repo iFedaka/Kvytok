@@ -31,9 +31,11 @@ shows what is built and what comes next.
 - [x] Payment webhook (`POST /reservations/{id}/payments`) that publishes, never writes
 - [x] Worker: confirms paid reservations, expires unpaid ones; the race between them is
       decided by `rowversion`; wakes on queue length (KEDA)
+- [x] Transactional outbox with EF Core: written in the reservation's transaction by a
+      `SaveChangesInterceptor`, published in-process right after the commit
 
 **Planned, in order**
-- [ ] Transactional outbox with EF Core
+- [ ] Outbox drain: publish what the in-process send failed to
 - [ ] Duplicate detection and dead-letter queues; idempotent consumer with retry
 - [ ] Load test (k6 or NBomber): 200 parallel requests for one seat
 - [ ] Key Vault through Aspire, secrets reached via managed identity

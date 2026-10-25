@@ -13,7 +13,8 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<BadRequestExceptionHandler>();
 // throw on binding failures in every environment so BadRequestExceptionHandler can describe them
 builder.Services.Configure<RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
-builder.AddSqlServerDbContext<KvytokDbContext>("kvytok");
+builder.AddSqlServerDbContext<KvytokDbContext>("kvytok",
+    configureDbContextOptions: o => o.AddKvytokInterceptors());
 
 // The Azure SDK emits Service Bus spans only behind this switch; without it the send
 // is missing from the trace. Must be set before the client is added.
@@ -23,6 +24,7 @@ string? reservationsQueue = null;
 builder.AddAzureServiceBusClient("reservations", s => reservationsQueue = s.QueueOrTopicName);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<ServiceBusClient>().CreateSender(reservationsQueue));
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<OutboxPublisher>();
 builder.Services.AddOptions<ReservationOptions>()
     .BindConfiguration(ReservationOptions.Section)
     .Validate(o => o.HoldFor > TimeSpan.Zero, "Reservation:HoldFor must be a positive duration, e.g. 00:10:00.")

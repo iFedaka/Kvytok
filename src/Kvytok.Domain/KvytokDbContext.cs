@@ -2,7 +2,8 @@
 
 namespace Kvytok.Domain;
 
-public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options) : DbContext(options)
+public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options)
+    : DbContext(KvytokDbContextOptions.RequireInterceptors(options))
 {
     // status enums are stored by name; wide enough for the longest member
     private const int StatusMaxLength = 16;
@@ -10,6 +11,7 @@ public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options) :
     public DbSet<Event> Events => Set<Event>();
     public DbSet<Seat> Seats => Set<Seat>();
     public DbSet<Reservation> Reservations => Set<Reservation>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -40,6 +42,16 @@ public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options) :
             e.Property(x => x.RowVersion).IsRowVersion();
             // the worker scans by this
             e.HasIndex(x => x.ExpiresAt).HasFilter("[Status] = 'Held'");
+        });
+
+        model.Entity<OutboxMessage>(e =>
+        {
+            e.Property(x => x.MessageId).HasMaxLength(OutboxMessage.MaxMessageIdLength).IsRequired();
+            e.Property(x => x.Subject).HasMaxLength(OutboxMessage.MaxSubjectLength).IsRequired();
+            e.Property(x => x.Body).IsRequired();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSDATETIMEOFFSET()");
+            // what is still owed stays small however large the table grows
+            e.HasIndex(x => x.CreatedAt).HasFilter("[PublishedAt] IS NULL");
         });
     }
 }
