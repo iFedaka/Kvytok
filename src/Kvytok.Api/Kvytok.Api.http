@@ -57,5 +57,14 @@ Content-Type: application/json
 @reservationId = {{reserveSeat.response.body.$.reservationId}}
 GET {{host}}/reservations/{{reservationId}}
 
+### Pay for it -> 202. The worker confirms it; GET the reservation again to see Confirmed.
+# Skip this and the reservation turns Expired once the hold runs out, seat 7 free again.
+POST {{host}}/reservations/{{reservationId}}/payments
+Content-Type: application/json
+
+{
+  "paymentReference": "pay_demo_1"
+}
+
 ### OpenAPI document
 GET {{host}}/openapi/v1.json

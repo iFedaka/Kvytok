@@ -8,11 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Azure.Messaging.ServiceBus" />
     <PackageReference Include="Aspire.Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Kvytok.ServiceDefaults\Kvytok.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\Kvytok.Domain\Kvytok.Domain.csproj" />
+    <ProjectReference Include="..\Kvytok.Contracts\Kvytok.Contracts.csproj" />
   </ItemGroup>
 </Project>

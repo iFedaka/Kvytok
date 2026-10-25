@@ -27,6 +27,9 @@ var api = builder
     .WithReference(db)
     .WithReference(reservationsQueue)
     .WaitForCompletion(migrator)
+    // This is the demo environment: nobody watches a screen for ten minutes.
+    // The Api's own default is the ten minutes the README describes.
+    .WithEnvironment("Reservation__HoldFor", "00:00:30")
     .WithUrlForEndpoint("https", _ => new() { Url = "/scalar", DisplayText = "Scalar" })
     .WithExternalHttpEndpoints()
     .PublishAsAzureContainerApp((infra, app) =>
@@ -44,6 +47,7 @@ var worker = builder
     {
         app.Template.Scale.MinReplicas = 0;
         app.Template.Scale.MaxReplicas = 1;
+        app.ScaleOnQueue(infra, reservationsQueue);
     });
 
 // Locally the services reach Azure as the developer (az or azd login). Managed identity

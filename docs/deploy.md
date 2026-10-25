@@ -27,6 +27,10 @@ azd generated both from the AppHost (`azd infra gen`) and now reads the files
 instead of the AppHost. A change to the AppHost's Azure shape (scale, ingress,
 probes, a new resource) does nothing until you regenerate and commit the files.
 
+When a regeneration adds an output to `main.bicep` that an app template reads
+(for example `MESSAGING_NAME`, which the worker's scale rule needs), run
+`azd provision` before `azd deploy`, or the template is filled with an empty value.
+
 Deploying from a clean machine also needs the environment to exist first:
 
 ```powershell
@@ -93,6 +97,13 @@ az containerapp secret list -g rg-kvytok-dev -n api -o table
 
 Never paste its value into a commit, an issue, or a chat.
 
+## The payment webhook is open
+
+`POST /reservations/{id}/payments` takes no key, on purpose, so that a reviewer
+can run the demo from Scalar alone. A caller can only report a payment; the
+worker decides whether it confirms anything. If that ever needs closing, the
+probe port's header-key check is the pattern to copy.
+
 ## Verifying a deploy
 
 A green `azd deploy` does not mean a correct deploy. Check all five.
@@ -105,7 +116,7 @@ az containerapp list -g rg-kvytok-dev `
 ```
 
 Expected: `api` external `True` with 0–3 replicas, `worker` with no ingress at
-all and 0–1. Container Apps default to min 1 / max 10 and no external ingress, so
+all and 0–1, plus a scale rule on the queue (below). Container Apps default to min 1 / max 10 and no external ingress, so
 both must be set explicitly in the AppHost. Getting this wrong gives you either a
 round-the-clock bill or an API nobody outside can reach.
 
@@ -116,6 +127,19 @@ az containerapp show -g rg-kvytok-dev -n api --query "properties.template.contai
 ```
 
 Expected: `Liveness` on `/alive` and `Readiness` on `/health`, both on 8081.
+
+**The worker can wake itself.**
+
+```powershell
+az containerapp show -g rg-kvytok-dev -n worker --query "properties.template.scale" -o json
+```
+
+Expected: one `azure-servicebus` rule on `reservations` with `identity` set to the
+worker's user-assigned identity, and `pollingInterval: 10`. Without the rule the
+worker sits at zero replicas forever and no reservation is ever confirmed or expired.
+
+**Hold duration.** The api's `Reservation__HoldFor` is `00:00:30`: the deployed
+environment is the demo. The code's own default is ten minutes.
 
 **The public surface.** The root document returns JSON, `/scalar` renders the API
 reference, `/openapi/v1.json` returns the document.
@@ -135,12 +159,24 @@ exec 3<>/dev/tcp/localhost/8081 && \
   cat <&3
 ```
 
+**Confirmation and expiry, end to end.** In Scalar: create an event, reserve two
+seats, pay for one. Within about a minute the paid reservation reads `Confirmed`
+and the other `Expired`, its seat `Free` in the event's seat map.
+
 **Logs.** Both apps should be writing to Log Analytics.
 
 ## When the app looks dead
 
 Both apps scale to zero. The first request after an idle period wakes a container
 and can take several seconds or time out outright. Retry before investigating.
+
+The worker wakes on queue length, polled every 10 seconds, and stays up for the
+5-minute cooldown after the queue empties. Reserving a seat publishes
+"reservation created" immediately, which wakes it, so in a demo it is usually
+already running when the payment and the expiry arrive. From cold, add the polling
+interval plus a container start to any confirmation or expiry. Scheduled expiries
+do not count as queue length until they fall due, so a pending hold does not keep
+the worker awake for its whole duration.
 
 The same applies to logs: at zero replicas there is nothing producing them, so
 wake the app with a request before reading.
@@ -197,8 +233,7 @@ notification, not a cap.
 The Container Registry (Basic) costs a flat few dollars a month regardless of
 use. Container Apps compute is free up to a monthly grant and billed per second
 after it; both apps sit at min 0 replicas, so idle time is close to free. The API
-wakes on an HTTP request. The worker currently never wakes at all, because it has
-no scale rule yet.
+wakes on an HTTP request, the worker on a message ready in the queue.
 
 The database is on the free offer (`useFreeLimit: true`, `GP_S_Gen5`) with
 `freeLimitExhaustionBehavior: AutoPause` — when the monthly allowance is spent
@@ -270,8 +305,9 @@ deployed every service, new API and worker revisions are briefly live against th
 old schema. Fine while every migration is additive; a breaking one needs the
 migrator to run ahead of the apps, or an expand-then-contract migration.
 
-**The worker cannot wake itself.** Minimum replicas is 0 with no scale rule,
-because there is no queue yet. When Service Bus arrives it needs a KEDA scale
-rule on queue length, or it will sleep through every message.
+**A lost publish leaves a seat held.** Reserving commits first and publishes after,
+so if Service Bus is unreachable at that moment, "reservation created" and its
+scheduled expiry are both lost (the error is logged) and the seat stays held until
+released by hand. The transactional outbox closes this.
 
 **No CI deployment.** Deploys are run by hand from a workstation.

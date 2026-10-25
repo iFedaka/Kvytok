@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
+using Kvytok.Api.Features.ReserveSeat;
 using Kvytok.Domain;
 using Scalar.AspNetCore;
 
@@ -22,6 +23,10 @@ string? reservationsQueue = null;
 builder.AddAzureServiceBusClient("reservations", s => reservationsQueue = s.QueueOrTopicName);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<ServiceBusClient>().CreateSender(reservationsQueue));
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddOptions<ReservationOptions>()
+    .BindConfiguration(ReservationOptions.Section)
+    .Validate(o => o.HoldFor > TimeSpan.Zero, "Reservation:HoldFor must be a positive duration, e.g. 00:10:00.")
+    .ValidateOnStart();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpoints(typeof(Program).Assembly);
 

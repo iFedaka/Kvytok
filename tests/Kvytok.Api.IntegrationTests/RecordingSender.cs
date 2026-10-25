@@ -17,4 +17,11 @@ public sealed class RecordingSender : ServiceBusSender
         _sent.Enqueue(message);
         return Task.CompletedTask;
     }
+
+    public override Task SendMessagesAsync(IEnumerable<ServiceBusMessage> messages, CancellationToken cancellationToken = default)
+    {
+        foreach (var message in messages)
+            _sent.Enqueue(message);
+        return Task.CompletedTask;
+    }
 }

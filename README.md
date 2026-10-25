@@ -27,10 +27,12 @@ shows what is built and what comes next.
 - [x] Migrations as a separate Container Apps job, run by azd after each deploy
 - [x] Health checks on a separate port behind a key, used by the platform's liveness and readiness probes
 - [x] Infrastructure as code in the repository (Bicep generated from the AppHost)
+- [x] Service Bus through Aspire; the Api publishes "reservation created" and schedules its expiry
+- [x] Payment webhook (`POST /reservations/{id}/payments`) that publishes, never writes
+- [x] Worker: confirms paid reservations, expires unpaid ones; the race between them is
+      decided by `rowversion`; wakes on queue length (KEDA)
 
 **Planned, in order**
-- [ ] Service Bus through Aspire; the Api publishes "reservation created"
-- [ ] Worker: confirms paid reservations, expires unpaid ones
 - [ ] Transactional outbox with EF Core
 - [ ] Duplicate detection and dead-letter queues; idempotent consumer with retry
 - [ ] Load test (k6 or NBomber): 200 parallel requests for one seat
@@ -68,10 +70,18 @@ use case, each holding its endpoint, handler and data access. A contested seat i
 decided by a single conditional update (`SET Status = 'Held' WHERE Status = 'Free'`):
 SQL Server locks the row, so exactly one request changes it and the rest get `409`.
 Reservations carry a `rowversion`, since confirm, cancel and expire can race on them.
+Reserving a seat also schedules an "expiry due" message for the moment the hold runs out
+(`Reservation:HoldFor`: ten minutes here, thirty seconds in the demo environment). A
+payment arrives as a webhook, `POST /reservations/{id}/payments`, which only puts a
+message on the queue.
 
 **Worker** — a `BackgroundService` consuming the reservations queue: confirms paid
-reservations, expires unpaid ones. Idempotent by message key, with retry and a
-dead-letter queue for poison messages.
+reservations, expires unpaid ones. Both leave `Held` through a write conditional on the
+reservation's `rowversion`, so when a payment lands while the expiry is in flight,
+whichever commits first decides and the other finds it is too late: a paid seat is never
+released, and a late payment never resurrects an expired reservation. A payment
+delivered twice finds the reservation already confirmed and changes nothing. Retry and
+a dead-letter queue for poison messages.
 
 **Data** — Azure SQL (serverless). Reservations and the transactional outbox live in
 the same database, so publishing an event and changing state happen in one transaction.
@@ -91,6 +101,15 @@ ingress does not route to.
 - **Service Bus rather than Storage Queues or Event Grid.** Duplicate detection,
   sessions and a built-in dead-letter queue; Storage Queues have none of these, and
   Event Grid is for fan-out notifications, not work queues.
+- **Scheduled messages rather than a sweep for expiry.** The broker holds each expiry until
+  it is due, so there is no timer to own, and an expiry that finds the reservation already
+  confirmed doing nothing is the correct outcome rather than a missed case.
+- **An open payment webhook.** It is the one public endpoint besides booking that changes
+  state on request, and it is unauthenticated on purpose: the whole demo, pay one
+  reservation and watch the other expire, runs from the API reference page with nothing
+  to ask for. The data is test data, and the endpoint can only report a payment; the
+  worker decides what it means. A real provider would sign its calls and the endpoint
+  would verify the signature.
 - **Container Apps rather than App Service or AKS.** It runs the Api and a
   queue-driven Worker side by side with scale-to-zero, without running a cluster.
 

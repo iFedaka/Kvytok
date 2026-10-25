@@ -59,6 +59,23 @@ public sealed class ReserveSeatTests(ApiFixture api)
     }
 
     [Fact]
+    public async Task Schedules_The_Expiry_For_The_Moment_The_Hold_Runs_Out()
+    {
+        var eventId = await api.CreateEventAsync();
+
+        var response = await ReserveAsync(eventId, 7, "holder@example.com");
+
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(
+            ApiFixture.Json,
+            TestContext.Current.CancellationToken);
+        var message = Assert.Single(api.ReservationsQueue.Sent, m =>
+            m.Subject == nameof(ReservationExpiryDue)
+            && m.Body.ToObjectFromJson<ReservationExpiryDue>(ApiFixture.Json)!.ReservationId == body!.ReservationId);
+        Assert.Equal($"{body!.ReservationId}:expiry", message.MessageId);
+        Assert.Equal(body.ExpiresAt, message.ScheduledEnqueueTime);
+    }
+
+    [Fact]
     public async Task Publishes_Nothing_When_The_Seat_Is_Taken()
     {
         var eventId = await api.CreateEventAsync();
@@ -188,7 +205,8 @@ public sealed class ReserveSeatTests(ApiFixture api)
     // the sender is shared by the whole run, so pick out this test's event
     private IEnumerable<ServiceBusMessage> SentFor(Guid eventId) =>
         api.ReservationsQueue.Sent.Where(m =>
-            m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
+            m.Subject == nameof(ReservationCreated)
+            && m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
 
     private Task<HttpResponseMessage> ReserveAsync(Guid eventId, int seatNumber, string email) =>
         api.Client.PostAsJsonAsync($"/events/{eventId}/reservations",

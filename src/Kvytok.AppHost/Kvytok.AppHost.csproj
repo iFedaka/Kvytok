@@ -17,7 +17,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AspireUseCliBundle>true</AspireUseCliBundle>
+    <!-- No AspireUseCliBundle: with it, dotnet run is routed through the Aspire CLI and ignores the
+         publish arguments azd passes, so azd cannot generate the manifest. Dashboard and orchestrator
+         come from packages instead; aspire run still works. ASPIRE010 only says the bundle is off. -->
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
     <UserSecretsId>680c7d8c-640f-43d0-a310-d5e47d24b1e1</UserSecretsId>
   </PropertyGroup>
 

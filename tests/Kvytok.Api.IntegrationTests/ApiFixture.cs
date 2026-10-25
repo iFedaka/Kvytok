@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.CreateEvent;
+using Kvytok.Api.Features.ReserveSeat;
 using Kvytok.Domain;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -78,6 +79,15 @@ public sealed class ApiFixture : IAsyncLifetime
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<CreateEventResponse>(Json);
         return body!.EventId;
+    }
+
+    public async Task<Guid> ReserveAsync(Guid eventId, int seatNumber = 1)
+    {
+        var response = await Client.PostAsJsonAsync($"/events/{eventId}/reservations",
+            new ReserveSeatRequest(seatNumber, "holder@example.com"));
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(Json);
+        return body!.ReservationId;
     }
 
     public async ValueTask DisposeAsync()

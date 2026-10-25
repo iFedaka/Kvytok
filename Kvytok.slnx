@@ -10,5 +10,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Kvytok.Api.IntegrationTests/Kvytok.Api.IntegrationTests.csproj" />
+    <Project Path="tests/Kvytok.Worker.IntegrationTests/Kvytok.Worker.IntegrationTests.csproj" />
   </Folder>
 </Solution>
