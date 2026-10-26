@@ -139,7 +139,10 @@ worker's user-assigned identity, and `pollingInterval: 10`. Without the rule the
 worker sits at zero replicas forever and no reservation is ever confirmed or expired.
 
 **Hold duration.** The api's `Reservation__HoldFor` is `00:00:30`: the deployed
-environment is the demo. The code's own default is ten minutes.
+environment is the demo. The code's own default is ten minutes. `Outbox__Lease` is
+`00:00:05` to match (default 30 seconds); the api refuses to start unless the lease,
+plus the relay's 10-second drain interval, plus one send (capped at the lease, less a
+second kept for recording it) is shorter than the hold.
 
 **The public surface.** The root document returns JSON, `/scalar` renders the API
 reference, `/openapi/v1.json` returns the document.
@@ -297,17 +300,44 @@ When abandoning an environment entirely rather than tidying it,
 
 Listed so a reader does not mistake these for oversights.
 
-**Migrations run after the new code, not before it.** They live in their own
-project, `Kvytok.MigrationService`, deployed as the `migrator` Container Apps job
-and started by the azd `postdeploy` hook (`scripts/run-migrations.sh`, or `.ps1` on Windows), which
-fails the deploy if the job does not succeed. Because the hook runs after azd has
-deployed every service, new API and worker revisions are briefly live against the
-old schema. Fine while every migration is additive; a breaking one needs the
-migrator to run ahead of the apps, or an expand-then-contract migration.
+**Migrations run after the new code unless you deploy the migrator first.** They
+live in their own project, `Kvytok.MigrationService`, deployed as the `migrator`
+Container Apps job and started by the azd `postdeploy` hook (`scripts/run-migrations.sh`,
+or `.ps1` on Windows), which fails the deploy if the job does not succeed. A plain
+`azd deploy` runs the hook after every service is deployed, so new API and worker
+revisions are briefly live against the old schema. That is safe only if the new code
+works against the old schema, and an additive migration is not enough to ensure it.
+A new column the code writes breaks every write until the job finishes: EF inserts
+every mapped column, so the `ClaimedAt` column on the outbox would have failed every
+reservation. For such a change, deploy the migrator on its own first:
 
-**A lost publish leaves a seat held.** Reserving commits first and publishes after,
-so if Service Bus is unreachable at that moment, "reservation created" and its
-scheduled expiry are both lost (the error is logged) and the seat stays held until
-released by hand. The transactional outbox closes this.
+```sh
+azd deploy migrator   # the new job image; the hook runs it while the apps keep the old code
+azd deploy            # the apps, against the migrated schema; the hook runs the job again, a no-op
+```
+
+The hook fires after a single-service deploy too. This order relies on the old code
+working against the new schema, which holds while new columns are nullable or have
+defaults. A migration that breaks the old code (a rename, a drop, a new `NOT NULL`
+column without a default) still needs expand-then-contract across two deploys.
+
+**A lost publish is repaired only while the API is running.** Reserving writes its
+messages to the outbox in the same transaction, then sends them right after the
+commit. If that send fails, or the replica dies between commit and send, the rows
+stay owed and the API's relay sends them on its next drain (every 10 seconds, once a
+row is older than `Outbox__Lease`, 5 seconds here). Since the expiry is due at an absolute time, a late one is
+simply delivered at once. The relay only runs while an API replica is up, so after
+a crash the seat stays held until the next request of any kind wakes the API. To
+check: `SELECT * FROM OutboxMessages WHERE PublishedAt IS NULL` should be empty
+shortly after any request.
+
+**No duplicate detection on the queue.** The outbox can send a message twice, and
+the worker absorbs that: every step is a write guarded on the reservation's state.
+Turning detection on would drop the duplicate at the broker instead. It works with
+the current message ids, which come from the reservation and are stored on the
+outbox row, so a re-send carries the same id. The detection window must exceed the
+longest a re-send can trail the first send (the lease plus a drain interval, or
+longer across a broker outage). `requiresDuplicateDetection` cannot be changed on an
+existing queue, so decide before the next teardown, not after.
 
 **No CI deployment.** Deploys are run by hand from a workstation.

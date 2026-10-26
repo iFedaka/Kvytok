@@ -30,6 +30,8 @@ var api = builder
     // This is the demo environment: nobody watches a screen for ten minutes.
     // The Api's own default is the ten minutes the README describes.
     .WithEnvironment("Reservation__HoldFor", "00:00:30")
+    // Must stay well under the hold: a lost publish stays lost this long plus one drain
+    .WithEnvironment("Outbox__Lease", "00:00:05")
     .WithUrlForEndpoint("https", _ => new() { Url = "/scalar", DisplayText = "Scalar" })
     .WithExternalHttpEndpoints()
     .PublishAsAzureContainerApp((infra, app) =>

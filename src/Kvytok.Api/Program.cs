@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.ReserveSeat;
 using Kvytok.Domain;
+using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -25,6 +26,21 @@ builder.AddAzureServiceBusClient("reservations", s => reservationsQueue = s.Queu
 builder.Services.AddSingleton(sp => sp.GetRequiredService<ServiceBusClient>().CreateSender(reservationsQueue));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<OutboxPublisher>();
+builder.Services.AddOptions<OutboxOptions>()
+    .BindConfiguration(OutboxOptions.Section)
+    .Validate(o => o.Lease > OutboxOptions.MarkReserve,
+        $"Outbox:Lease must be longer than {OutboxOptions.MarkReserve.TotalSeconds:0} second, e.g. 00:00:30.")
+    // The longest a lost publish stays lost must fit inside the hold it is meant to end: claimable
+    // after the lease, picked up within one drain, sent within one send timeout
+    .Validate<IOptions<ReservationOptions>>(
+        (o, reservation) => o.Lease + OutboxRelay.DrainEvery + o.SendTimeout < reservation.Value.HoldFor,
+        $"Outbox:Lease, plus the relay's {OutboxRelay.DrainEvery.TotalSeconds:0}-second drain interval, plus one send " +
+        $"(the lease or {OutboxOptions.PublishTimeout.TotalSeconds:0} seconds, whichever is shorter, less " +
+        $"{OutboxOptions.MarkReserve.TotalSeconds:0} second) must be shorter than Reservation:HoldFor.")
+    .ValidateOnStart();
+// resolvable on its own, so a test can run a drain without waiting for the timer
+builder.Services.AddSingleton<OutboxRelay>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboxRelay>());
 builder.Services.AddOptions<ReservationOptions>()
     .BindConfiguration(ReservationOptions.Section)
     .Validate(o => o.HoldFor > TimeSpan.Zero, "Reservation:HoldFor must be a positive duration, e.g. 00:10:00.")

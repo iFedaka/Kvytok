@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.CreateEvent;
 using Kvytok.Api.Features.ReserveSeat;
+using Kvytok.Api.Infrastructure;
 using Kvytok.Domain;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -36,7 +37,12 @@ public sealed class ApiFixture : IAsyncLifetime
 
     public RecordingSender ReservationsQueue { get; } = new();
 
+    public static TimeSpan OutboxLease { get; } = TimeSpan.FromSeconds(2);
+
     public HttpClient Client { get; private set; } = null!;
+
+    /// <summary>The API's own relay. Its timer runs on <see cref="Clock"/> and so never fires; tests drain it by hand.</summary>
+    public OutboxRelay Relay => _factory.Services.GetRequiredService<OutboxRelay>();
 
     public async ValueTask InitializeAsync()
     {
@@ -58,6 +64,8 @@ public sealed class ApiFixture : IAsyncLifetime
             // never connected to: the sender built from it is replaced below
             builder.UseSetting("ConnectionStrings:reservations",
                 "Endpoint=sb://localhost/;SharedAccessKeyName=test;SharedAccessKey=test;EntityPath=reservations");
+            // short, so a test can outlast a claim in a second or two; the relay's timer never fires here anyway
+            builder.UseSetting("Outbox:Lease", OutboxLease.ToString());
             builder.ConfigureServices(services =>
             {
                 services.Replace(ServiceDescriptor.Singleton<TimeProvider>(Clock));

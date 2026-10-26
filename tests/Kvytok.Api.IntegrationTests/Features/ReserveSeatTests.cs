@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.ReserveSeat;
+using Kvytok.Api.IntegrationTests.Infrastructure;
 using Kvytok.Domain;
 using Kvytok.Contracts;
 using Microsoft.AspNetCore.Mvc;
@@ -9,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Kvytok.Api.IntegrationTests.Features;
 
+// it drains the outbox in one test; see OutboxRelayTests
+[Collection(OutboxDrains.Collection)]
 public sealed class ReserveSeatTests(ApiFixture api)
 {
     [Fact]
@@ -119,6 +122,37 @@ public sealed class ReserveSeatTests(ApiFixture api)
         var rows = await OutboxFor(body!.ReservationId);
         Assert.Equal(2, rows.Count);
         Assert.All(rows, r => Assert.Null(r.PublishedAt));
+    }
+
+    [Fact]
+    public async Task The_Next_Drain_Publishes_What_The_Immediate_Publish_Could_Not()
+    {
+        var eventId = await api.CreateEventAsync();
+        var brokerDown = true;
+        api.ReservationsQueue.FailWhen(m =>
+            brokerDown
+            && m.Subject == nameof(ReservationCreated)
+            && m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
+        var response = await ReserveAsync(eventId, 7, "holder@example.com");
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(
+            ApiFixture.Json,
+            TestContext.Current.CancellationToken);
+        Assert.Empty(SentFor(eventId));
+        brokerDown = false;
+        // past the lease, as a request that died after its commit would leave them
+        await api.WithDbAsync(db => db.OutboxMessages
+            .Where(m => m.MessageId.StartsWith(body!.ReservationId.ToString()))
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.CreatedAt, m => m.CreatedAt.AddMinutes(-1))));
+
+        await api.Relay.DrainAsync(TestContext.Current.CancellationToken);
+
+        var created = Assert.Single(SentFor(eventId));
+        Assert.Equal(body!.ReservationId.ToString(), created.MessageId);
+        var expiry = Assert.Single(api.ReservationsQueue.Sent, m => m.MessageId == $"{body.ReservationId}:expiry");
+        // still due when the hold ends, not a hold's length after the late publish
+        Assert.Equal(body.ExpiresAt, expiry.ScheduledEnqueueTime);
+        var rows = await OutboxFor(body.ReservationId);
+        Assert.All(rows, r => Assert.Equal(api.Clock.GetUtcNow(), r.PublishedAt));
     }
 
     [Fact]

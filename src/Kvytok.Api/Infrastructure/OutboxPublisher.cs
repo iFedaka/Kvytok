@@ -1,6 +1,7 @@
 using Azure.Messaging.ServiceBus;
 using Kvytok.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Kvytok.Api.Infrastructure;
 
@@ -13,10 +14,9 @@ public sealed class OutboxPublisher(
     ServiceBusSender queue,
     KvytokDbContext db,
     TimeProvider clock,
+    IOptions<OutboxOptions> options,
     ILogger<OutboxPublisher> logger)
 {
-    private static readonly TimeSpan PublishTimeout = TimeSpan.FromSeconds(10);
-
     /// <summary>Never throws: the change is committed whatever happens here.</summary>
     public async Task PublishAsync(IReadOnlyCollection<OutboxMessage> messages)
     {
@@ -24,14 +24,18 @@ public sealed class OutboxPublisher(
             return;
 
         // Not the request's token: a client that hangs up after the commit is still owed the
-        // publish. Bounded, so a broker outage cannot stall the response for minutes.
-        using var timeout = new CancellationTokenSource(PublishTimeout);
+        // publish. Bounded, so a broker outage cannot stall the response for minutes, and by the
+        // lease too: past it the relay may have taken these rows, and two senders would race.
+        // Sending and recording it share the one deadline; sending stops early to leave room.
+        using var owned = new CancellationTokenSource(options.Value.OwnedFor);
+        using var sendTimeout = CancellationTokenSource.CreateLinkedTokenSource(owned.Token);
+        sendTimeout.CancelAfter(options.Value.SendTimeout);
         var ids = messages.Select(m => m.Id).ToList();
 
         try
         {
             // One batch to one queue is atomic: a reservation's event never goes without its expiry
-            await queue.SendMessagesAsync(messages.Select(ToServiceBusMessage), timeout.Token);
+            await queue.SendMessagesAsync(messages.Select(ToServiceBusMessage), sendTimeout.Token);
         }
         catch (Exception ex)
         {
@@ -41,18 +45,25 @@ public sealed class OutboxPublisher(
 
         try
         {
-            await db.OutboxMessages
-                .Where(m => ids.Contains(m.Id) && m.PublishedAt == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(m => m.PublishedAt, clock.GetUtcNow()), timeout.Token);
+            await MarkPublishedAsync(db, ids, clock.GetUtcNow(), owned.Token);
         }
         catch (Exception ex)
         {
-            // sent but still marked owed, so it will be sent again; the message id makes that a duplicate
+            // sent but still marked owed, so it will be sent again; the consumer absorbs the duplicate
             logger.LogWarning(ex, "Outbox messages {OutboxIds} were published but not marked as published", ids);
         }
     }
 
-    private static ServiceBusMessage ToServiceBusMessage(OutboxMessage row)
+    /// <summary>
+    /// Guarded on PublishedAt, so a row two senders both published keeps the first time it went out.
+    /// </summary>
+    internal static Task MarkPublishedAsync(
+        KvytokDbContext db, IReadOnlyCollection<long> ids, DateTimeOffset at, CancellationToken cancellationToken) =>
+        db.OutboxMessages
+            .Where(m => ids.Contains(m.Id) && m.PublishedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.PublishedAt, at), cancellationToken);
+
+    internal static ServiceBusMessage ToServiceBusMessage(OutboxMessage row)
     {
         var message = new ServiceBusMessage(BinaryData.FromString(row.Body))
         {

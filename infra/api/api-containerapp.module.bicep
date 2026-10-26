@@ -149,6 +149,10 @@ resource api 'Microsoft.App/containerApps@2025-10-02-preview' = {
               value: '00:00:30'
             }
             {
+              name: 'Outbox__Lease'
+              value: '00:00:05'
+            }
+            {
               name: 'AZURE_CLIENT_ID'
               value: api_identity_outputs_clientid
             }

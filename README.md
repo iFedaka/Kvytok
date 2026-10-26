@@ -33,9 +33,10 @@ shows what is built and what comes next.
       decided by `rowversion`; wakes on queue length (KEDA)
 - [x] Transactional outbox with EF Core: written in the reservation's transaction by a
       `SaveChangesInterceptor`, published in-process right after the commit
+- [x] Outbox relay in the Api: a timer drains what the in-process send failed to publish,
+      each replica claiming a disjoint batch
 
 **Planned, in order**
-- [ ] Outbox drain: publish what the in-process send failed to
 - [ ] Duplicate detection and dead-letter queues; idempotent consumer with retry
 - [ ] Load test (k6 or NBomber): 200 parallel requests for one seat
 - [ ] Key Vault through Aspire, secrets reached via managed identity
@@ -112,6 +113,31 @@ ingress does not route to.
   to ask for. The data is test data, and the endpoint can only report a payment; the
   worker decides what it means. A real provider would sign its calls and the endpoint
   would verify the signature.
+- **The outbox relay runs inside the Api, not the Worker or a scheduled job.** A row the
+  in-process send failed to publish does harm only while someone wants that seat, and that
+  person's request is what wakes the Api, whose timer then drains the outbox. So the system
+  is wrong only while nobody can see it, and repairs itself as soon as somebody can. The
+  Worker cannot host it: KEDA wakes the Worker on messages in the queue, and creating those
+  messages is the relay's job, while a scheduled expiry is not counted until it falls due.
+  Up to three Api replicas each run a relay, so a drain first claims a batch with
+  `UPDATE … WITH (READPAST) … OUTPUT inserted.*`; a claim older than its lease belongs to a
+  replica that died mid-drain and is taken over. A row never claimed counts from its creation,
+  so the relay stays off rows whose own request is still sending them; one lease is both that
+  grace and the recovery time. Lease times are the database's clock, never a replica's:
+  `CreatedAt` is set by the database, and a cutoff computed in a container would be off by
+  that container's skew. A claim must outlive the operation it protects, and that operation is
+  sending a row and recording that it went, so neither sender acts past the lease: both finish
+  by the lease or the 10-second publish timeout, whichever comes first, and sending stops a
+  second before that to leave the record room to land. A drain that reaches that point stops
+  and leaves the rest of its batch to the next. A lost publish stays lost for up to the lease,
+  plus one drain interval, plus one send; that must fit inside the hold, and startup refuses a
+  configuration where it does not. The 30-second demo hold runs with a 5-second lease:
+  5 + 10 + 4 = 19 seconds. Duplicates can still happen at the edges (a cut-off send the broker
+  had already accepted, a record that fails to land), and the consumer absorbs them: every
+  step it takes is a write guarded on the reservation's state. Duplicate detection on the queue
+  would catch them one layer earlier; it is not needed for correctness. A scheduled Container Apps job or an
+  always-on replica would also work, but both cost more infrastructure than this needs.
+  The job becomes the right answer once something has to be correct with no traffic at all.
 - **Container Apps rather than App Service or AKS.** It runs the Api and a
   queue-driven Worker side by side with scale-to-zero, without running a cluster.
 
