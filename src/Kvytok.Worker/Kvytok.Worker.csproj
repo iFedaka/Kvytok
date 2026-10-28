@@ -14,6 +14,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The consumer's message handling, driven with fake settlement instead of a broker -->
+    <InternalsVisibleTo Include="Kvytok.Worker.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Kvytok.ServiceDefaults\Kvytok.ServiceDefaults.csproj" />
     <ProjectReference Include="..\Kvytok.Domain\Kvytok.Domain.csproj" />
     <ProjectReference Include="..\Kvytok.Contracts\Kvytok.Contracts.csproj" />

@@ -44,7 +44,7 @@ public sealed class ReservationsConsumer(
         await processor.StopProcessingAsync(CancellationToken.None);
     }
 
-    private async Task ProcessMessageAsync(ProcessMessageEventArgs args)
+    internal async Task ProcessMessageAsync(ProcessMessageEventArgs args)
     {
         var message = args.Message;
         try
