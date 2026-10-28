@@ -90,14 +90,15 @@ public sealed class ReservationLifecycleTests(DatabaseFixture database)
         // The 9:59 case, made deterministic: the expiry has read Held and is about to write
         // Expired when the payment commits. An unconditional write would now free a paid seat.
         var reservation = await database.SeedHeldAsync();
+        var (expiryId, paymentId) = await SeparatedIdsAsync(reservation);
         var payment = new BeforeFirstReservationUpdate(async () =>
         {
             await using var other = database.CreateDb();
-            await DatabaseFixture.Lifecycle(other).ConfirmAsync(reservation.Id, NewMessageId(), Ct);
+            await DatabaseFixture.Lifecycle(other).ConfirmAsync(reservation.Id, paymentId, Ct);
         });
 
         await using var db = database.CreateDb(payment);
-        var before = (await DatabaseFixture.Lifecycle(db).ExpireAsync(reservation.Id, NewMessageId(), Ct)).Before;
+        var before = (await DatabaseFixture.Lifecycle(db).ExpireAsync(reservation.Id, expiryId, Ct)).Before;
 
         Assert.Equal(ReservationStatus.Confirmed, before);
         Assert.Equal((ReservationStatus.Confirmed, SeatStatus.Booked), await database.StatusOfAsync(reservation));
@@ -107,14 +108,15 @@ public sealed class ReservationLifecycleTests(DatabaseFixture database)
     public async Task An_Expiry_That_Lands_Between_The_Payment_Reading_And_Writing_Wins()
     {
         var reservation = await database.SeedHeldAsync();
+        var (expiryId, paymentId) = await SeparatedIdsAsync(reservation);
         var expiry = new BeforeFirstReservationUpdate(async () =>
         {
             await using var other = database.CreateDb();
-            await DatabaseFixture.Lifecycle(other).ExpireAsync(reservation.Id, NewMessageId(), Ct);
+            await DatabaseFixture.Lifecycle(other).ExpireAsync(reservation.Id, expiryId, Ct);
         });
 
         await using var db = database.CreateDb(expiry);
-        var before = (await DatabaseFixture.Lifecycle(db).ConfirmAsync(reservation.Id, NewMessageId(), Ct)).Before;
+        var before = (await DatabaseFixture.Lifecycle(db).ConfirmAsync(reservation.Id, paymentId, Ct)).Before;
 
         Assert.Equal(ReservationStatus.Expired, before);
         Assert.Equal((ReservationStatus.Expired, SeatStatus.Free), await database.StatusOfAsync(reservation));
@@ -239,6 +241,21 @@ public sealed class ReservationLifecycleTests(DatabaseFixture database)
     }
 
     private static string NewMessageId() => Guid.NewGuid().ToString();
+
+    /// <summary>
+    /// The ids the Api gives a reservation's expiry and payment, with a recorded id between them.
+    /// The interleaving tests run one step inside the other's open transaction, which production
+    /// never does: if both unrecorded ids fell in the same gap of the index, the inner step would
+    /// wait on the outer one's range lock while the outer one waits on it, until the lock timeout.
+    /// The id between them puts the two range locks on different keys.
+    /// </summary>
+    private async Task<(string Expiry, string Payment)> SeparatedIdsAsync(Reservation reservation)
+    {
+        await using var db = database.CreateDb();
+        db.ProcessedMessages.Add(new ProcessedMessage { MessageId = $"{reservation.Id}:fence" });
+        await db.SaveChangesAsync(Ct);
+        return ($"{reservation.Id}:expiry", $"{reservation.Id}:payment:pay_123");
+    }
 
     private async Task<byte[]> RowVersionOfAsync(Reservation reservation)
     {
