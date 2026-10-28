@@ -15,7 +15,7 @@ public sealed class ReservationMessageHandlerTests(DatabaseFixture database)
     {
         var reservation = await database.SeedHeldAsync();
 
-        Assert.True(await HandleAsync(Message(new PaymentReceived(reservation.Id, "pay_123"))));
+        await HandleAsync(Message(new PaymentReceived(reservation.Id, "pay_123")));
 
         Assert.Equal((ReservationStatus.Confirmed, SeatStatus.Booked), await database.StatusOfAsync(reservation));
     }
@@ -25,7 +25,7 @@ public sealed class ReservationMessageHandlerTests(DatabaseFixture database)
     {
         var reservation = await database.SeedHeldAsync();
 
-        Assert.True(await HandleAsync(Message(new ReservationExpiryDue(reservation.Id))));
+        await HandleAsync(Message(new ReservationExpiryDue(reservation.Id)));
 
         Assert.Equal((ReservationStatus.Expired, SeatStatus.Free), await database.StatusOfAsync(reservation));
     }
@@ -35,8 +35,8 @@ public sealed class ReservationMessageHandlerTests(DatabaseFixture database)
     {
         var reservation = await database.SeedHeldAsync();
 
-        Assert.True(await HandleAsync(Message(
-            new ReservationCreated(reservation.Id, Guid.NewGuid(), reservation.SeatId, 1, reservation.ExpiresAt))));
+        await HandleAsync(Message(
+            new ReservationCreated(reservation.Id, Guid.NewGuid(), reservation.SeatId, 1, reservation.ExpiresAt)));
 
         Assert.Equal((ReservationStatus.Held, SeatStatus.Held), await database.StatusOfAsync(reservation));
     }
@@ -46,18 +46,34 @@ public sealed class ReservationMessageHandlerTests(DatabaseFixture database)
     {
         var message = ServiceBusModelFactory.ServiceBusReceivedMessage(BinaryData.FromString("{}"), subject: "SomethingElse");
 
-        Assert.False(await HandleAsync(message));
+        var refused = await Assert.ThrowsAsync<UnprocessableMessageException>(() => HandleAsync(message));
+        Assert.Equal("UnknownSubject", refused.Reason);
     }
 
-    private async Task<bool> HandleAsync(ServiceBusReceivedMessage message)
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("null")]
+    public async Task Refuses_A_Body_That_Is_Not_Its_Contract(string body)
+    {
+        var message = ServiceBusModelFactory.ServiceBusReceivedMessage(
+            BinaryData.FromString(body), messageId: NewMessageId(), subject: nameof(PaymentReceived));
+
+        var refused = await Assert.ThrowsAsync<UnprocessableMessageException>(() => HandleAsync(message));
+        Assert.Equal("MalformedBody", refused.Reason);
+    }
+
+    private async Task HandleAsync(ServiceBusReceivedMessage message)
     {
         await using var db = database.CreateDb();
         var handler = new ReservationMessageHandler(DatabaseFixture.Lifecycle(db), NullLogger<ReservationMessageHandler>.Instance);
-        return await handler.HandleAsync(message, Ct);
+        await handler.HandleAsync(message, Ct);
     }
 
     private static ServiceBusReceivedMessage Message<T>(T body) =>
         ServiceBusModelFactory.ServiceBusReceivedMessage(
             BinaryData.FromObjectAsJson(body, JsonSerializerOptions.Web),
+            messageId: NewMessageId(),
             subject: typeof(T).Name);
+
+    private static string NewMessageId() => Guid.NewGuid().ToString();
 }

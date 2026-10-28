@@ -27,7 +27,9 @@ shows what is built and what comes next.
 - [x] Migrations as a separate Container Apps job, run by azd after each deploy
 - [x] Health checks on a separate port behind a key, used by the platform's liveness and readiness probes
 - [x] Infrastructure as code in the repository (Bicep generated from the AppHost)
-- [x] Service Bus through Aspire; the Api publishes "reservation created" and schedules its expiry
+- [x] Service Bus through Aspire; the Api publishes "reservation created", which wakes the
+      worker before the payment arrives (see the [runbook](docs/deploy.md#when-the-app-looks-dead)),
+      and schedules its expiry
 - [x] Payment webhook (`POST /reservations/{id}/payments`) that publishes, never writes
 - [x] Worker: confirms paid reservations, expires unpaid ones; the race between them is
       decided by `rowversion`; wakes on queue length (KEDA)
@@ -35,9 +37,10 @@ shows what is built and what comes next.
       `SaveChangesInterceptor`, published in-process right after the commit
 - [x] Outbox relay in the Api: a timer drains what the in-process send failed to publish,
       each replica claiming a disjoint batch
+- [x] Idempotent consumer: each step recorded under its message id in the step's own transaction;
+      retry with exponential backoff, dead-letter queue after five attempts
 
 **Planned, in order**
-- [ ] Duplicate detection and dead-letter queues; idempotent consumer with retry
 - [ ] Load test (k6 or NBomber): 200 parallel requests for one seat
 - [ ] Key Vault through Aspire, secrets reached via managed identity
 - [ ] Application Insights through Aspire: end-to-end distributed trace, custom metric and dashboard
@@ -56,7 +59,8 @@ occasionally twice.
 Three things have to hold:
 
 - exactly one booking wins a contested seat, and the losers get a clear `409`;
-- a message delivered twice produces one reservation, not two;
+- a message delivered twice takes effect once: a payment confirms once, and a duplicate
+  is never mistaken for a second payment;
 - if the worker dies mid-processing, nothing is lost and nothing is double-charged.
 
 Everything else in this repository is the machinery required to make those three
@@ -83,8 +87,10 @@ reservations, expires unpaid ones. Both leave `Held` through a write conditional
 reservation's `rowversion`, so when a payment lands while the expiry is in flight,
 whichever commits first decides and the other finds it is too late: a paid seat is never
 released, and a late payment never resurrects an expired reservation. A payment
-delivered twice finds the reservation already confirmed and changes nothing. Retry and
-a dead-letter queue for poison messages.
+delivered twice is recognised by its message id, recorded in the same transaction as the
+step it took, and skipped. A step that fails is retried as a delayed copy of the message,
+2, 4, 8 and 16 seconds apart; the fifth failure, or a message no retry can help (a subject
+nobody handles, a body that is not its contract), goes to the dead-letter queue.
 
 **Data** — Azure SQL (serverless). Reservations and the transactional outbox live in
 the same database, so publishing an event and changing state happen in one transaction.
@@ -134,10 +140,35 @@ ingress does not route to.
   configuration where it does not. The 30-second demo hold runs with a 5-second lease:
   5 + 10 + 4 = 19 seconds. Duplicates can still happen at the edges (a cut-off send the broker
   had already accepted, a record that fails to land), and the consumer absorbs them: every
-  step it takes is a write guarded on the reservation's state. Duplicate detection on the queue
-  would catch them one layer earlier; it is not needed for correctness. A scheduled Container Apps job or an
+  message is keyed by its id, so a second delivery is skipped. Duplicate detection on the queue
+  would catch them one layer earlier, but it would also drop the worker's retries, which are
+  copies of the message under the same id, so it stays off. A scheduled Container Apps job or an
   always-on replica would also work, but both cost more infrastructure than this needs.
   The job becomes the right answer once something has to be correct with no traffic at all.
+- **The worker's message key is checked under a lock, not by racing to insert it.** Each
+  step first reads its message id from `ProcessedMessages` with `UPDLOCK, HOLDLOCK`, so a
+  second copy of the same message handled at the same moment waits for the first to commit,
+  then finds its record. Racing to insert and catching the key violation is also correct, but
+  EF logs the violation as an error before any catch sees it, so every harmless duplicate
+  would look like a failure. The cost is serialisation. An id not yet recorded is locked as a
+  range, up to the next key in the index, and message ids begin with a reservation id that is
+  a version 7 GUID, ordered by time. So almost every new id falls in the same open range above
+  the highest key, and steps queue one behind another whatever the concurrency. The ordering
+  that keeps inserts at the end of the index, which is why version 7 GUIDs exist, is exactly
+  what puts every lock in one place. Measured locally against SQL Server in a container, two
+  runs, every id fresh at the tail, which is the worst case for this lock: about 45 steps a
+  second from four concurrent handlers on, and lower at sixteen (34–41) than at four or eight, so past that point more replicas or a higher
+  `MaxConcurrentCalls` cost throughput rather than add it. One step alone takes about 35 ms;
+  the ceiling puts the part spent holding the lock at about 22 ms. Four round trips to the
+  database happen in that window, so on Azure SQL each millisecond of round trip adds about
+  4 ms: at 2 ms, an estimate of about 33 steps a second. With random ids the same steps reached at least twice
+  the ceiling before something else on the machine limited them. That is still far more than
+  this system needs. Past it, the first step is to key the table by a hash of the message id,
+  which gives up an ordering this table has no use for, scatters the range locks and keeps
+  the check as it is; racing to insert, log noise included, comes after that. The same range
+  lock is why a lock timeout (2 seconds) is retried and never taken for a duplicate: the lock
+  may belong to a different message entirely, and skipping on it would drop a message
+  nobody processed.
 - **Container Apps rather than App Service or AKS.** It runs the Api and a
   queue-driven Worker side by side with scale-to-zero, without running a cluster.
 
@@ -149,7 +180,7 @@ Measured with TODO (k6 / NBomber) against the deployed environment:
 | --- | --- | --- |
 | 200 concurrent bookings of one seat | 1 success, 199 × `409` | TODO |
 | p95 latency under that load | — | TODO ms |
-| Duplicate message delivery | one reservation | TODO |
+| Payment message delivered twice | one confirmation, repeat skipped | TODO |
 | Worker killed mid-batch | no lost messages | TODO |
 
 TODO: 10-second GIF — two browser windows booking the same seat, one wins.

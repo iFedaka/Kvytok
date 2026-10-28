@@ -6,36 +6,49 @@ using Kvytok.Domain;
 namespace Kvytok.Worker;
 
 /// <summary>
-/// Turns a message from the reservations queue into a lifecycle step. Every step is safe to run
-/// twice, since the broker delivers at least once: a repeat finds the reservation already decided
-/// and changes nothing.
+/// Turns a message from the reservations queue into a lifecycle step. The broker delivers at least
+/// once, so a message can arrive again: the step is keyed by the message id and a repeat is skipped,
+/// and a different message for a reservation that is already decided changes nothing.
 /// </summary>
 public sealed class ReservationMessageHandler(
     ReservationLifecycle lifecycle,
     ILogger<ReservationMessageHandler> logger)
 {
-    /// <returns>false if the message is of a kind this worker does not know.</returns>
-    public async Task<bool> HandleAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken)
+    /// <exception cref="UnprocessableMessageException">No retry can help this message.</exception>
+    public async Task HandleAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken)
     {
         switch (message.Subject)
         {
             case nameof(PaymentReceived):
-                await ConfirmAsync(Read<PaymentReceived>(message), cancellationToken);
-                return true;
+                await ConfirmAsync(message, Read<PaymentReceived>(message), cancellationToken);
+                break;
             case nameof(ReservationExpiryDue):
-                await ExpireAsync(Read<ReservationExpiryDue>(message), cancellationToken);
-                return true;
+                await ExpireAsync(message, Read<ReservationExpiryDue>(message), cancellationToken);
+                break;
             case nameof(ReservationCreated):
-                // Nothing to do yet: the expiry was scheduled in the same batch
-                return true;
+                // Nothing to process. It is sent the moment a seat is held, so a worker scaled to zero
+                // is already running when the payment arrives (docs/deploy.md, "When the app looks
+                // dead"); the expiry is scheduled and wakes the worker on its own. With a minimum
+                // of one replica this would have no job left, and could go.
+                break;
             default:
-                return false;
+                throw new UnprocessableMessageException(
+                    "UnknownSubject", $"No handler for subject '{message.Subject}'.");
         }
     }
 
-    private async Task ConfirmAsync(PaymentReceived payment, CancellationToken cancellationToken)
+    private async Task ConfirmAsync(
+        ServiceBusReceivedMessage message, PaymentReceived payment, CancellationToken cancellationToken)
     {
-        var before = await lifecycle.ConfirmAsync(payment.ReservationId, cancellationToken);
+        var step = await lifecycle.ConfirmAsync(payment.ReservationId, message.MessageId, cancellationToken);
+        if (step.IsAlreadyHandled)
+        {
+            logger.LogInformation("Payment {PaymentReference} for reservation {ReservationId} was delivered again; skipped",
+                payment.PaymentReference, payment.ReservationId);
+            return;
+        }
+
+        var before = step.Before;
         switch (before)
         {
             case ReservationStatus.Held:
@@ -61,14 +74,23 @@ public sealed class ReservationMessageHandler(
                 logger.LogWarning(
                     "Payment {PaymentReference} arrived after reservation {ReservationId} was {Status}; not confirmed",
                     payment.PaymentReference,
-                    payment.ReservationId, before);
+                    payment.ReservationId,
+                    before);
                 break;
         }
     }
 
-    private async Task ExpireAsync(ReservationExpiryDue due, CancellationToken cancellationToken)
+    private async Task ExpireAsync(
+        ServiceBusReceivedMessage message, ReservationExpiryDue due, CancellationToken cancellationToken)
     {
-        var before = await lifecycle.ExpireAsync(due.ReservationId, cancellationToken);
+        var step = await lifecycle.ExpireAsync(due.ReservationId, message.MessageId, cancellationToken);
+        if (step.IsAlreadyHandled)
+        {
+            logger.LogInformation("Expiry for reservation {ReservationId} was delivered again; skipped", due.ReservationId);
+            return;
+        }
+
+        var before = step.Before;
         switch (before)
         {
             case ReservationStatus.Held:
@@ -85,7 +107,20 @@ public sealed class ReservationMessageHandler(
         }
     }
 
-    private static T Read<T>(ServiceBusReceivedMessage message) =>
-        message.Body.ToObjectFromJson<T>(JsonSerializerOptions.Web)
-        ?? throw new InvalidOperationException($"Message {message.MessageId} has an empty {typeof(T).Name} body.");
+    private static T Read<T>(ServiceBusReceivedMessage message)
+    {
+        T? body;
+        try
+        {
+            body = message.Body.ToObjectFromJson<T>(JsonSerializerOptions.Web);
+        }
+        catch (JsonException ex)
+        {
+            throw new UnprocessableMessageException(
+                "MalformedBody", $"Message {message.MessageId} is not a {typeof(T).Name}: {ex.Message}", ex);
+        }
+
+        return body ?? throw new UnprocessableMessageException(
+            "MalformedBody", $"Message {message.MessageId} has an empty {typeof(T).Name} body.");
+    }
 }

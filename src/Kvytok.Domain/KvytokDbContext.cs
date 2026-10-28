@@ -12,6 +12,7 @@ public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options)
     public DbSet<Seat> Seats => Set<Seat>();
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -53,6 +54,14 @@ public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options)
             // What is still owed stays small however large the table grows, so the relay's
             // claim reads only owed rows and sent ones can be kept as a record of what went out
             e.HasIndex(x => x.CreatedAt).HasFilter("[PublishedAt] IS NULL");
+        });
+
+        model.Entity<ProcessedMessage>(e =>
+        {
+            // the key itself is the duplicate check: a second insert of one id fails
+            e.HasKey(x => x.MessageId);
+            e.Property(x => x.MessageId).HasMaxLength(OutboxMessage.MaxMessageIdLength);
+            e.Property(x => x.ProcessedAt).HasDefaultValueSql("SYSDATETIMEOFFSET()");
         });
     }
 }

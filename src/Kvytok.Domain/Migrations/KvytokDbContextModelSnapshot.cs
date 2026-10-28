@@ -88,6 +88,22 @@ namespace Kvytok.Domain.Migrations
                     b.ToTable("OutboxMessages");
                 });
 
+            modelBuilder.Entity("Kvytok.Domain.ProcessedMessage", b =>
+                {
+                    b.Property<string>("MessageId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset>("ProcessedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetimeoffset")
+                        .HasDefaultValueSql("SYSDATETIMEOFFSET()");
+
+                    b.HasKey("MessageId");
+
+                    b.ToTable("ProcessedMessages");
+                });
+
             modelBuilder.Entity("Kvytok.Domain.Reservation", b =>
                 {
                     b.Property<Guid>("Id")
