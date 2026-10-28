@@ -1,0 +1,5 @@
+{
+  "enabledMcpJsonServers": [
+    "k6"
+  ]
+}

@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 *.swp
 
 .azure
+
+# Claude Code personal settings
+.claude/settings.local.json
