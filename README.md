@@ -39,9 +39,10 @@ shows what is built and what comes next.
       each replica claiming a disjoint batch
 - [x] Idempotent consumer: each step recorded under its message id in the step's own transaction;
       retry with exponential backoff, dead-letter queue after five attempts
+- [x] Load test with k6: up to 800 parallel requests for one seat against the deployed
+      environment; numbers in [Results](#results)
 
 **Planned, in order**
-- [ ] Load test (k6 or NBomber): 200 parallel requests for one seat
 - [ ] Key Vault through Aspire, secrets reached via managed identity
 - [ ] Application Insights through Aspire: end-to-end distributed trace, custom metric and dashboard
 - [ ] Redis cache-aside
@@ -174,14 +175,65 @@ ingress does not route to.
 
 ## Results
 
-Measured with TODO (k6 / NBomber) against the deployed environment:
+Measured with [k6](tests/load/hot-seat.js) against the deployed environment (Sweden
+Central), from a laptop over the public internet, on 2026-10-28. Each burst is a fresh
+event: every virtual user sleeps until the same instant, then sends one reservation for
+seat 1; the last request left within 19 ms of the first even at 800. Times are k6's
+`http_req_duration`, from the first byte sent to the last byte received. They leave out
+the TCP and TLS handshake but include one network round trip, which is most of the
+40 ms an uncontended `409` takes.
 
 | Scenario | Expected | Measured |
 | --- | --- | --- |
-| 200 concurrent bookings of one seat | 1 success, 199 × `409` | TODO |
-| p95 latency under that load | — | TODO ms |
+| 200 concurrent bookings of one seat | 1 × `201`, 199 × `409`, no double booking | 1 × `201`, 199 × `409`, nothing else, 0 double bookings, in each of 4 runs |
+| p95 of a losing request, 200 contenders | — | 776–2120 ms across those runs; 51–85 ms uncontended |
 | Payment message delivered twice | one confirmation, repeat skipped | TODO |
 | Worker killed mid-batch | no lost messages | TODO |
+
+The four bursts of 200, in order. The Api scales on the platform's default HTTP rule, from
+zero to at most three replicas:
+
+| Run | Api replicas | Loser p50 | Loser p95 | Loser max | Winner | Last answer |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 1467 ms | 2120 ms | 2217 ms | 69 ms | 2368 ms |
+| 2 | 1, then 3 | 532 ms | 776 ms | 782 ms | 850 ms | 937 ms |
+| 3 | 3 | 492 ms | 816 ms | 863 ms | 88 ms | 987 ms |
+| 4 | 3 | 287 ms | 1395 ms | 1550 ms | 66 ms | 1656 ms |
+
+Rising contention, one burst each, three replicas throughout:
+
+| Contenders | `201` / `409` / other | Loser p50 | Loser p95 | Loser max | Last answer | TLS handshake p95 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 50 | 1 / 49 / 0 | 48 ms | 91 ms | 94 ms | 186 ms | 57 ms |
+| 100 | 1 / 99 / 0 | 119 ms | 864 ms | 940 ms | 1058 ms | 103 ms |
+| 200 | 1 / 199 / 0 | 287 ms | 1395 ms | 1550 ms | 1656 ms | 143 ms |
+| 400 | 1 / 399 / 0 | 400 ms | 1203 ms | 1482 ms | 1594 ms | 252 ms |
+| 800 | 1 / 799 / 0 | 712 ms | 1431 ms | 1804 ms | 2048 ms | 539 ms |
+
+What the numbers say:
+
+- **Correct at every level.** 2,150 attempts over eight bursts: exactly one `201` per burst,
+  every other answer a clean `409`, no timeouts, no `5xx`, and the seat read back as `Held`.
+- **The losing path is correct, not yet fast.** Alone, a `409` takes about 40 ms. At 50
+  contenders the p95 stays near that (91 ms); between 50 and 100 it jumps to almost a
+  second, and at 200 it is 0.8 to 2.1 seconds. Past 200 the p95 levels off while the median
+  keeps climbing: requests are being answered one after another, not side by side. The
+  likely cause, unconfirmed until tracing exists: a loser learns the seat is taken only from
+  `UPDATE … WHERE Status = 'Free'`, which first takes an update lock on that one row, and
+  update locks exclude each other, so losers queue for the row one at a time even after the
+  winner has committed. A replica's default pool of 100 SQL connections queues anything past
+  that. The fix that follows is to answer `409` from a read before taking any lock: under read
+  committed snapshot, on by default in Azure SQL, a plain read of the seat's status never
+  waits, so once the seat is held a loser does not queue at all, and the conditional update
+  stays the arbiter for the few requests that still see `Free`.
+- **Scale-out does not help the burst that causes it.** The first burst found one replica and
+  had the worst p95 (2.1 s). The replica count rose to three by the end of the second burst,
+  and from then on the p95 at 200 contenders was 0.8 to 1.4 seconds.
+- **Throughput, for completeness:** 800 answers in 2.05 seconds, about 390 a second, on a
+  single seat.
+- **Cold start.** After idle, the Api and serverless SQL are both at zero. The first request
+  took over a minute: the replica started, then failed its 1-second readiness probe until the
+  database resumed. The load test waits that out before measuring.
 
 TODO: 10-second GIF — two browser windows booking the same seat, one wins.
 
@@ -207,6 +259,14 @@ This provisions everything in `infra/` (Bicep), deploys the Api and the Worker, 
 runs the migrations job. Takes about 6 minutes: roughly 5 to provision, under 1 to
 deploy. `azd down` removes it all; running cost is roughly TODO per month, most
 of which is Redis and Service Bus.
+
+The load test needs [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/); `az`, if
+logged in, adds the Api's replica count to each result:
+
+```
+tests/load/run.sh                                    # 4 × 200, then 50 to 800; results in tests/load/results
+k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
+```
 
 ## Not in scope
 
