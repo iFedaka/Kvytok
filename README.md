@@ -42,7 +42,6 @@ shows what is built and what comes next.
       environment; numbers in [Results](#results)
 
 **Planned, in order**
-- [ ] Key Vault through Aspire, secrets reached via managed identity
 - [ ] Application Insights through Aspire: end-to-end distributed trace, custom metric and dashboard
 - [ ] Redis cache-aside
 - [ ] Seat-grid demo page
@@ -103,7 +102,8 @@ the same database, so publishing an event and changing state happen in one trans
 **Messaging** — Azure Service Bus. The Api never calls the Worker; they share a
 message contract and nothing else.
 
-**Operations** — secrets in Key Vault reached through a managed identity, Redis for
+**Operations** — SQL and Service Bus reached through managed identities, with no
+connection secrets to store, Redis for
 cache-aside on the event list, Application Insights with distributed tracing across
 the queue boundary, health endpoints `/health` and `/alive` on a port the public
 ingress does not route to.
@@ -283,9 +283,15 @@ k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
 - **Single region, no DR.** The naming and infrastructure assume one region on purpose;
   multi-region would change the design and the bill without changing the lesson.
 - **No payment provider.** Payment confirmation is modelled as an incoming message.
+- **No Key Vault, because nothing here authenticates with a secret.** SQL and Service Bus
+  are both reached through managed identities (Service Bus has local auth disabled), so
+  there are no connection strings to keep. The one secret that exists is the health probe
+  key, a Container App secret that the platform's probe configuration repeats in plain
+  text anyway, because probe headers cannot reference secrets. A vault with nothing in it
+  would be decoration.
 
 ## Stack
 
 .NET 10 · ASP.NET Core minimal APIs · EF Core · .NET Aspire · Azure SQL · Azure
-Service Bus · Azure Cache for Redis · Key Vault · Application Insights ·
+Service Bus · Azure Cache for Redis · Application Insights ·
 Azure Container Apps · Bicep · GitHub Actions

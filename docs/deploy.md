@@ -302,6 +302,18 @@ When abandoning an environment entirely rather than tidying it,
 
 Listed so a reader does not mistake these for oversights.
 
+**The API and worker are `db_owner`, though they only read and write rows.** Every
+`*-roles-sql` module in `infra/` ends with `ALTER ROLE db_owner ADD MEMBER`, for the
+API and worker as well as the migrator. Only the migrator needs DDL; the API and worker
+need only `db_datareader` and `db_datawriter` (their raw SQL is `SET LOCK_TIMEOUT` and
+lock hints, which need no extra permission). That is Aspire's default, not a choice:
+in `Aspire.Hosting.Azure.Sql` 13.6.3 the role is a literal inside the generated deployment
+script, and `WithRoleAssignments` takes Azure RBAC roles, not database roles. Editing
+the modules by hand would be erased by the next `azd infra gen`. Narrowing it properly
+means replacing Aspire's role script for those two identities with one written in the
+AppHost, or a newer Aspire that exposes the role. Until then, a compromised API can
+drop tables.
+
 **Migrations run after the new code unless you deploy the migrator first.** They
 live in their own project, `Kvytok.MigrationService`, deployed as the `migrator`
 Container Apps job and started by the azd `postdeploy` hook (`scripts/run-migrations.sh`,
