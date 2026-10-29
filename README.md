@@ -27,9 +27,8 @@ shows what is built and what comes next.
 - [x] Migrations as a separate Container Apps job, run by azd after each deploy
 - [x] Health checks on a separate port behind a key, used by the platform's liveness and readiness probes
 - [x] Infrastructure as code in the repository (Bicep generated from the AppHost)
-- [x] Service Bus through Aspire; the Api publishes "reservation created", which wakes the
-      worker before the payment arrives (see the [runbook](docs/deploy.md#when-the-app-looks-dead)),
-      and schedules its expiry
+- [x] Service Bus through Aspire; reserving a seat publishes "reservation created" and
+      schedules the reservation's expiry
 - [x] Payment webhook (`POST /reservations/{id}/payments`) that publishes, never writes
 - [x] Worker: confirms paid reservations, expires unpaid ones; the race between them is
       decided by `rowversion`; wakes on queue length (KEDA)
@@ -48,7 +47,8 @@ shows what is built and what comes next.
 - [ ] Redis cache-aside
 - [ ] Seat-grid demo page
 - [ ] C4 diagram, levels 1–2
-- [ ] ADRs for the [Decisions](#decisions), in MADR format
+- [ ] ADRs for the remaining [Decisions](#decisions), in MADR format (two so far, in
+      [docs/adr](docs/adr))
 
 ## The problem
 
@@ -87,7 +87,8 @@ payment arrives as a webhook, `POST /reservations/{id}/payments`, which only put
 message on the queue.
 
 **Worker** — a `BackgroundService` consuming the reservations queue: confirms paid
-reservations, expires unpaid ones. Both leave `Held` through a write conditional on the
+reservations, expires unpaid ones, and ignores "reservation created", which is there only
+to wake it ([Decisions](#decisions)). Both leave `Held` through a write conditional on the
 reservation's `rowversion`, so when a payment lands while the expiry is in flight,
 whichever commits first decides and the other finds it is too late: a paid seat is never
 released, and a late payment never resurrects an expired reservation. A payment
@@ -111,9 +112,26 @@ ingress does not route to.
 
 - **Vertical slices rather than layers.** Each use case is one folder holding its
   endpoint, handler and data access, so a change touches one place.
-- **Service Bus rather than Storage Queues or Event Grid.** Duplicate detection,
-  sessions and a built-in dead-letter queue; Storage Queues have none of these, and
-  Event Grid is for fan-out notifications, not work queues.
+- **Service Bus rather than Storage Queues or Event Grid.** Scheduled messages, which the
+  whole expiry path rests on (and the worker's retries, which are delayed copies), and a
+  built-in dead-letter queue with a delivery count. Storage Queues can only approximate a
+  schedule by hiding a message for up to seven days, and have no dead-letter queue, so the
+  five-attempt limit would be mine to build. Event Grid is for fan-out notifications, not work
+  queues. Duplicate detection and sessions, the usual reasons given, are not used: there is no
+  per-key ordering to preserve, and duplicate detection has to stay off (see the outbox below).
+  The namespace is Standard because that is what Aspire's `AddAzureServiceBus` provisions, not
+  by choice: nothing here needs more than Basic, which has no topics, sessions, transactions or
+  duplicate detection. The bill shows Service Bus at $0.00 every day from 23 to 29 October, so
+  there is nothing to save yet; if a base charge appears, Basic is the tier to move to.
+- **"Reservation created" is published to wake the worker, not to tell it anything.** The
+  worker ignores its content. The Worker scales to zero and KEDA wakes it on queue length,
+  polled every 10 seconds, so a payment arriving at a cold worker waits for a poll plus a
+  container start before it is confirmed. Publishing on every reservation starts that wait
+  early. The bound: KEDA scales the worker back to zero five minutes after the queue empties,
+  so only payments within about five minutes of the reservation benefit, half of a ten-minute
+  hold. The price is a message and a wake-up on every reservation, including the ones
+  nobody pays. The time saved has not been measured; it is intent, not a result. With a
+  minimum of one worker replica the message would have no job left and could go.
 - **Scheduled messages rather than a sweep for expiry.** The broker holds each expiry until
   it is due, so there is no timer to own, and an expiry that finds the reservation already
   confirmed doing nothing is the correct outcome rather than a missed case.
@@ -123,56 +141,16 @@ ingress does not route to.
   to ask for. The data is test data, and the endpoint can only report a payment; the
   worker decides what it means. A real provider would sign its calls and the endpoint
   would verify the signature.
-- **The outbox relay runs inside the Api, not the Worker or a scheduled job.** A row the
-  in-process send failed to publish does harm only while someone wants that seat, and that
-  person's request is what wakes the Api, whose timer then drains the outbox. So the system
-  is wrong only while nobody can see it, and repairs itself as soon as somebody can. The
-  Worker cannot host it: KEDA wakes the Worker on messages in the queue, and creating those
-  messages is the relay's job, while a scheduled expiry is not counted until it falls due.
-  Up to three Api replicas each run a relay, so a drain first claims a batch with
-  `UPDATE … WITH (READPAST) … OUTPUT inserted.*`; a claim older than its lease belongs to a
-  replica that died mid-drain and is taken over. A row never claimed counts from its creation,
-  so the relay stays off rows whose own request is still sending them; one lease is both that
-  grace and the recovery time. Lease times are the database's clock, never a replica's:
-  `CreatedAt` is set by the database, and a cutoff computed in a container would be off by
-  that container's skew. A claim must outlive the operation it protects, and that operation is
-  sending a row and recording that it went, so neither sender acts past the lease: both finish
-  by the lease or the 10-second publish timeout, whichever comes first, and sending stops a
-  second before that to leave the record room to land. A drain that reaches that point stops
-  and leaves the rest of its batch to the next. A lost publish stays lost for up to the lease,
-  plus one drain interval, plus one send; that must fit inside the hold, and startup refuses a
-  configuration where it does not. The 30-second demo hold runs with a 5-second lease:
-  5 + 10 + 4 = 19 seconds. Duplicates can still happen at the edges (a cut-off send the broker
-  had already accepted, a record that fails to land), and the consumer absorbs them: every
-  message is keyed by its id, so a second delivery is skipped. Duplicate detection on the queue
-  would catch them one layer earlier, but it would also drop the worker's retries, which are
-  copies of the message under the same id, so it stays off. A scheduled Container Apps job or an
-  always-on replica would also work, but both cost more infrastructure than this needs.
-  The job becomes the right answer once something has to be correct with no traffic at all.
-- **The worker's message key is checked under a lock, not by racing to insert it.** Each
-  step first reads its message id from `ProcessedMessages` with `UPDLOCK, HOLDLOCK`, so a
-  second copy of the same message handled at the same moment waits for the first to commit,
-  then finds its record. Racing to insert and catching the key violation is also correct, but
-  EF logs the violation as an error before any catch sees it, so every harmless duplicate
-  would look like a failure. The cost is serialisation. An id not yet recorded is locked as a
-  range, up to the next key in the index, and message ids begin with a reservation id that is
-  a version 7 GUID, ordered by time. So almost every new id falls in the same open range above
-  the highest key, and steps queue one behind another whatever the concurrency. The ordering
-  that keeps inserts at the end of the index, which is why version 7 GUIDs exist, is exactly
-  what puts every lock in one place. Measured locally against SQL Server in a container, two
-  runs, every id fresh at the tail, which is the worst case for this lock: about 45 steps a
-  second from four concurrent handlers on, and lower at sixteen (34–41) than at four or eight, so past that point more replicas or a higher
-  `MaxConcurrentCalls` cost throughput rather than add it. One step alone takes about 35 ms;
-  the ceiling puts the part spent holding the lock at about 22 ms. Four round trips to the
-  database happen in that window, so on Azure SQL each millisecond of round trip adds about
-  4 ms: at 2 ms, an estimate of about 33 steps a second. With random ids the same steps reached at least twice
-  the ceiling before something else on the machine limited them. That is still far more than
-  this system needs. Past it, the first step is to key the table by a hash of the message id,
-  which gives up an ordering this table has no use for, scatters the range locks and keeps
-  the check as it is; racing to insert, log noise included, comes after that. The same range
-  lock is why a lock timeout (2 seconds) is retried and never taken for a duplicate: the lock
-  may belong to a different message entirely, and skipping on it would drop a message
-  nobody processed.
+- **The outbox relay runs inside the Api, not the Worker or a scheduled job.** An unpublished
+  row does harm only while someone wants that seat, and that person's request wakes the Api,
+  whose timer drains the outbox. Replicas claim disjoint batches under a lease, and startup
+  refuses a configuration whose recovery time does not fit inside the hold. Duplicate detection
+  stays off because it would drop the worker's retries. [ADR 0001](docs/adr/0001-outbox-relay-in-the-api.md)
+- **The worker's message key is checked under a lock, not by racing to insert it.** A second
+  copy of a message waits for the first and finds its record; racing to insert is also correct
+  but logs every harmless duplicate as an error. The cost is a measured ceiling of about 45
+  steps a second, because time-ordered ids put every range lock in one place.
+  [ADR 0002](docs/adr/0002-message-key-checked-under-a-lock.md)
 - **Container Apps rather than App Service or AKS.** It runs the Api and a
   queue-driven Worker side by side with scale-to-zero, without running a cluster.
 
@@ -200,8 +178,8 @@ endpoint at the time.
 | 200 concurrent bookings of one seat | 1 × `201`, 199 × `409`, no double booking | 1 × `201`, 199 × `409`, nothing else, 0 double bookings, in each of 8 runs across both versions |
 | p95 of a losing request, 200 contenders, Api scaled out | — | read-first 181–381 ms, lock-first 776–1395 ms; 35–69 ms uncontended |
 | p95 of a losing request, 200 contenders, one replica | — | read-first 1810 ms, lock-first 2120 ms |
-| Payment message delivered twice | one confirmation, repeat skipped | TODO |
-| Worker killed mid-batch | no lost messages | TODO |
+| Payment message delivered twice | one confirmation, repeat skipped | one confirmation, repeat skipped, both one after the other and at the same moment ([worker tests](tests/Kvytok.Worker.IntegrationTests/ReservationLifecycleTests.cs)); also checked by hand with a local worker against the dev Service Bus namespace |
+| Worker killed mid-batch | no lost messages | TODO: not yet tested against a running worker |
 
 The four bursts of 200, in order: read-first, with lock-first in brackets. The Api runs
 at 0.5 vCPU per replica and scales on the platform's default HTTP rule, from zero to at most
@@ -251,8 +229,14 @@ What the numbers say:
 - **Throughput, for completeness:** 800 answers in 1.66 seconds, about 480 a second
   (lock-first: 390), on a single seat.
 - **Cold start.** After idle, the Api and serverless SQL are both at zero. The first request
-  took over a minute: the replica started, then failed its 1-second readiness probe until the
-  database resumed. The load test waits that out before measuring.
+  took over a minute: the replica started, then failed its readiness probe until the
+  database resumed. The probe runs `/health`, which queries the database, with the platform's
+  default 1-second timeout, and a serverless database takes 30 to 60 seconds to resume, so
+  every check during the resume fails and the replica gets no traffic until one passes. The
+  resume itself is the floor. What the probe adds on top is configuration: a startup probe
+  with a generous failure threshold, separate from readiness, or a readiness check without
+  the database, which the [runbook](docs/deploy.md) already names as the first thing to drop.
+  Neither is applied or measured yet. The load test waits the cold start out before measuring.
 
 TODO: 10-second GIF — two browser windows booking the same seat, one wins.
 
@@ -276,8 +260,11 @@ azd up
 
 This provisions everything in `infra/` (Bicep), deploys the Api and the Worker, and
 runs the migrations job. Takes about 6 minutes: roughly 5 to provision, under 1 to
-deploy. `azd down` removes it all; running cost is roughly TODO per month, most
-of which is Redis and Service Bus.
+deploy. `azd down` removes it all. Measured from the bill, 16 to 29 October: $7.86 in all, under the
+subscription's $20 monthly budget alert. Container Apps compute was $5.93 of it, up to $1.30 a
+day while the environment was being built, and under 5 cents a day from 27 October. The one
+steady charge is the Container Registry (Basic), 17 cents a day, about $5 a month. SQL (free
+offer), Service Bus and Log Analytics billed $0.00 ([cost notes](docs/deploy.md#cost)).
 
 The load test needs [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/); `az`, if
 logged in, adds the Api's replica count to each result:

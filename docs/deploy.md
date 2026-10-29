@@ -234,7 +234,9 @@ The budget `Budget20` is scoped to the subscription, $20 a month, alerting at
 notification, not a cap.
 
 The Container Registry (Basic) costs a flat few dollars a month regardless of
-use. Container Apps compute is free up to a monthly grant and billed per second
+use: 17 cents a day on the bill. The Service Bus namespace is Standard (Aspire's
+default, not a choice; nothing here needs more than Basic), yet the bill showed it at
+$0.00 every day from 23 to 29 October. If a base charge starts appearing, move to Basic. Container Apps compute is free up to a monthly grant and billed per second
 after it; both apps sit at min 0 replicas, so idle time is close to free. The API
 wakes on an HTTP request, the worker on a message ready in the queue.
 
@@ -331,13 +333,15 @@ a crash the seat stays held until the next request of any kind wakes the API. To
 check: `SELECT * FROM OutboxMessages WHERE PublishedAt IS NULL` should be empty
 shortly after any request.
 
-**No duplicate detection on the queue.** The outbox can send a message twice, and
-the worker absorbs that: every step is a write guarded on the reservation's state.
-Turning detection on would drop the duplicate at the broker instead. It works with
-the current message ids, which come from the reservation and are stored on the
-outbox row, so a re-send carries the same id. The detection window must exceed the
-longest a re-send can trail the first send (the lease plus a drain interval, or
-longer across a broker outage). `requiresDuplicateDetection` cannot be changed on an
-existing queue, so decide before the next teardown, not after.
+**No duplicate detection on the queue, and it must stay off.** The outbox can send a
+message twice, and the worker absorbs that: every step is recorded under its message
+id, so a second delivery is skipped. Turning detection on would not just move that
+check to the broker; it would break retries. A failed step is retried as a delayed
+copy of the message under the original id, 2, 4, 8 and 16 seconds later, and every
+one of those falls inside the shortest detection window allowed (20 seconds). The
+broker would drop each copy as a duplicate, so a failed step would be retried zero
+times and simply vanish. (This note used to say the opposite; that was true before
+retries became delayed copies.) `requiresDuplicateDetection` cannot be changed on an
+existing queue, so turning it on would break retries until the queue is recreated.
 
 **No CI deployment.** Deploys are run by hand from a workstation.
