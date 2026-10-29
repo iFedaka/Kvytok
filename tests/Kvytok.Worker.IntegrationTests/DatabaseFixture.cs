@@ -1,4 +1,5 @@
 using Kvytok.Domain;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,6 +17,13 @@ public sealed class DatabaseFixture : IAsyncLifetime
 {
     private readonly MsSqlContainer _sql = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
 
+    // Its own database, as Aspire gives the app, not the container's default 'master':
+    // a system database cannot take the options the migrations set. Migrate creates it.
+    private string ConnectionString => new SqlConnectionStringBuilder(_sql.GetConnectionString())
+    {
+        InitialCatalog = "kvytok",
+    }.ConnectionString;
+
     public async ValueTask InitializeAsync()
     {
         await _sql.StartAsync();
@@ -26,7 +34,7 @@ public sealed class DatabaseFixture : IAsyncLifetime
     /// <summary>A context configured as Aspire configures the worker's, retry-on-failure included.</summary>
     public KvytokDbContext CreateDb(params IInterceptor[] interceptors) =>
         new(new DbContextOptionsBuilder<KvytokDbContext>()
-            .UseSqlServer(_sql.GetConnectionString(), sql => sql.EnableRetryOnFailure())
+            .UseSqlServer(ConnectionString, sql => sql.EnableRetryOnFailure())
             .AddKvytokInterceptors()
             .AddInterceptors(interceptors)
             .Options);

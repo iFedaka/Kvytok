@@ -186,6 +186,29 @@ public sealed class ReserveSeatTests(ApiFixture api)
         Assert.Contains("Seat 7", problem.Detail);
     }
 
+    [Fact]
+    public async Task Turns_Away_A_Request_For_A_Taken_Seat_Without_Waiting_For_Its_Lock()
+    {
+        var eventId = await api.CreateEventAsync();
+        (await ReserveAsync(eventId, 7, "first@example.com")).EnsureSuccessStatusCode();
+
+        // Another transaction holds the taken seat's row lock, as the next contender in a burst
+        // does. The request must answer from the committed status, not queue behind it.
+        await using var blocker = new KvytokDbContext(new DbContextOptionsBuilder<KvytokDbContext>()
+            .UseSqlServer(api.ConnectionString)
+            .AddKvytokInterceptors()
+            .Options);
+        await using var transaction = await blocker.Database.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await blocker.Seats
+            .Where(s => s.EventId == eventId && s.Number == 7)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SeatStatus.Held), TestContext.Current.CancellationToken);
+
+        var response = await ReserveAsync(eventId, 7, "second@example.com")
+            .WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
     [Theory]
     [InlineData(SeatStatus.Held)]
     [InlineData(SeatStatus.Booked)]

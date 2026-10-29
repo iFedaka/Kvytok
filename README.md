@@ -77,6 +77,9 @@ TODO: C4 container diagram (levels 1-2)
 use case, each holding its endpoint, handler and data access. A contested seat is
 decided by a single conditional update (`SET Status = 'Held' WHERE Status = 'Free'`):
 SQL Server locks the row, so exactly one request changes it and the rest get `409`.
+Before that, a plain read of the seat's status turns away requests for a seat already
+taken. Under read committed snapshot it takes no lock and waits for none, so most of a
+burst never queues for the row; the update stays the arbiter for whoever still reads `Free`.
 Reservations carry a `rowversion`, since confirm, cancel and expire can race on them.
 Reserving a seat also schedules an "expiry due" message for the moment the hold runs out
 (`Reservation:HoldFor`: ten minutes here, thirty seconds in the demo environment). A

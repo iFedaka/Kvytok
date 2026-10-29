@@ -61,22 +61,30 @@ public sealed class ReserveSeatEndpoint : IEndpoint
     {
         // a failed attempt may have left the reservation tracked as Added
         db.ChangeTracker.Clear();
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         var seat = db.Seats.Where(s => s.EventId == eventId && s.Number == request.SeatNumber);
 
-        // The race is decided here, in the first statement. SQL Server takes an update
-        // lock on the row, so of any number of concurrent requests exactly one sees
-        // 'Free' and flips it; the rest wait for that lock, re-read 'Held' and update nothing.
+        // Most requests for a contested seat arrive after it is taken. Under read committed
+        // snapshot this read takes no lock and waits for none, so they get their 409 here
+        // instead of queueing one by one for the row's update lock. It only turns requests
+        // away: a seat read as 'Free' still has to win the update below.
+        var status = await seat.Select(s => (SeatStatus?)s.Status).SingleOrDefaultAsync(cancellationToken);
+        if (status is null)
+            return (TypedResults.NotFound(), []);
+        if (status != SeatStatus.Free)
+            return (SeatTaken(request.SeatNumber), []);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        // The race is decided here. SQL Server takes an update lock on the row, so of any
+        // number of concurrent requests that read 'Free' exactly one flips it; the rest wait
+        // for that lock, re-read 'Held' and update nothing. Seats are never deleted, so the
+        // seat read above still exists.
         var held = await seat
             .Where(s => s.Status == SeatStatus.Free)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SeatStatus.Held), cancellationToken);
         if (held == 0)
-        {
-            return (await seat.AnyAsync(cancellationToken)
-                ? SeatTaken(request.SeatNumber)
-                : TypedResults.NotFound(), []);
-        }
+            return (SeatTaken(request.SeatNumber), []);
 
         // we hold the row's exclusive lock until commit, so this cannot change under us
         var seatId = await seat.Select(s => s.Id).SingleAsync(cancellationToken);

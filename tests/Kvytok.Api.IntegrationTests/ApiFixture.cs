@@ -8,6 +8,7 @@ using Kvytok.Api.Infrastructure;
 using Kvytok.Domain;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -26,6 +27,13 @@ public sealed class ApiFixture : IAsyncLifetime
 {
     private readonly MsSqlContainer _sql = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
     private WebApplicationFactory<Program> _factory = null!;
+
+    // Its own database, as Aspire gives the app, not the container's default 'master':
+    // a system database cannot take the options the migrations set. Migrate creates it.
+    public string ConnectionString => new SqlConnectionStringBuilder(_sql.GetConnectionString())
+    {
+        InitialCatalog = "kvytok",
+    }.ConnectionString;
 
     // Fixed so expiry times can be asserted exactly. Never advanced: tests share it.
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero));
@@ -50,7 +58,7 @@ public sealed class ApiFixture : IAsyncLifetime
 
         // In the app the migrator resource does this
         await using (var db = new KvytokDbContext(new DbContextOptionsBuilder<KvytokDbContext>()
-                         .UseSqlServer(_sql.GetConnectionString())
+                         .UseSqlServer(ConnectionString)
                          .AddKvytokInterceptors()
                          .Options))
         {
@@ -60,7 +68,7 @@ public sealed class ApiFixture : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
-            builder.UseSetting("ConnectionStrings:kvytok", _sql.GetConnectionString());
+            builder.UseSetting("ConnectionStrings:kvytok", ConnectionString);
             // never connected to: the sender built from it is replaced below
             builder.UseSetting("ConnectionStrings:reservations",
                 "Endpoint=sb://localhost/;SharedAccessKeyName=test;SharedAccessKey=test;EntityPath=reservations");
