@@ -52,6 +52,8 @@ var worker = builder
         app.ScaleOnQueue(infra, reservationsQueue);
     });
 
+migrator.NarrowsToReadWrite(api, worker);
+
 // Locally the services reach Azure as the developer (az or azd login). Managed identity
 // exists only in Azure, and probing for it on a laptop can hang for minutes.
 if (builder.ExecutionContext.IsRunMode)

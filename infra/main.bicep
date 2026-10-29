@@ -134,6 +134,7 @@ module worker_roles_sql 'worker-roles-sql/worker-roles-sql.module.bicep' = {
 }
 output API_IDENTITY_CLIENTID string = api_identity.outputs.clientId
 output API_IDENTITY_ID string = api_identity.outputs.id
+output API_IDENTITY_PRINCIPALNAME string = api_identity.outputs.principalName
 output ASPIRE_ENV_AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN string = aspire_env.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output ASPIRE_ENV_AZURE_CONTAINER_APPS_ENVIRONMENT_ID string = aspire_env.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_ID
 output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT
@@ -148,3 +149,4 @@ output MIGRATOR_IDENTITY_ID string = migrator_identity.outputs.id
 output SQL_SQLSERVERFQDN string = sql.outputs.sqlServerFqdn
 output WORKER_IDENTITY_CLIENTID string = worker_identity.outputs.clientId
 output WORKER_IDENTITY_ID string = worker_identity.outputs.id
+output WORKER_IDENTITY_PRINCIPALNAME string = worker_identity.outputs.principalName

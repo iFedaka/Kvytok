@@ -104,9 +104,33 @@ can run the demo from Scalar alone. A caller can only report a payment; the
 worker decides whether it confirms anything. If that ever needs closing, the
 probe port's header-key check is the pattern to copy.
 
+## Database roles
+
+Aspire makes every identity `db_owner`: each `*-roles-sql` module in `infra/` ends with
+`ALTER ROLE db_owner ADD MEMBER`, for the API and worker as well as the migrator. In
+`Aspire.Hosting.Azure.Sql` 13.6.3 the role is a literal inside the generated deployment
+script, `WithRoleAssignments` takes Azure RBAC roles rather than database roles, and
+editing the modules by hand is erased by the next `azd infra gen`.
+
+So the migrator takes it back. It already runs after every deploy, signs in by managed
+identity, and is `db_owner`, which is the permission needed to change role membership.
+After applying migrations it moves the API's and worker's users to `db_datareader` and
+`db_datawriter` and drops them from `db_owner`. That is all they need: their raw SQL is
+`SET LOCK_TIMEOUT`, lock hints and an `UPDATE ... OUTPUT`. The three changes run in one
+transaction, so a failure leaves the user in `db_owner` for the next run to retry, never
+in all three roles. The narrower roles are added before `db_owner` is dropped, and every
+step checks membership first, so a re-run changes nothing. The AppHost passes the two user
+names (`DatabaseRoles.cs`) as `Database__ReadWriteUsers__0` and `__1` on the job, taken
+from the identities' Bicep outputs; a name with no user behind it fails the job, and so
+the deploy.
+
+The cost is a window: from the moment Aspire's role script grants `db_owner` until the
+migrator finishes in the postdeploy hook, the API and worker are owners. That is one
+migration run long, and accepted rather than engineered away.
+
 ## Verifying a deploy
 
-A green `azd deploy` does not mean a correct deploy. Check all five.
+A green `azd deploy` does not mean a correct deploy. Check each of these.
 
 **Shape of the apps.**
 
@@ -137,6 +161,23 @@ az containerapp show -g rg-kvytok-dev -n worker --query "properties.template.sca
 Expected: one `azure-servicebus` rule on `reservations` with `identity` set to the
 worker's user-assigned identity, and `pollingInterval: 10`. Without the rule the
 worker sits at zero replicas forever and no reservation is ever confirmed or expired.
+
+**Database roles.** Only Aspire's SQL admin identity can sign in to the database, so
+the migrator logs the role membership it leaves behind:
+
+```powershell
+$ws = az monitor log-analytics workspace list -g rg-kvytok-dev --query "[0].customerId" -o tsv
+'{"query":"ContainerAppConsoleLogs_CL | where ContainerJobName_s == ''migrator'' and Log_s has ''Database role members'' | top 1 by TimeGenerated | project Log_s"}' |
+  Set-Content "$env:TEMP\roles.json"
+az rest --method post --url "https://api.loganalytics.io/v1/workspaces/$ws/query" `
+  --resource https://api.loganalytics.io --body "@$env:TEMP\roles.json" --query "tables[0].rows[0][0]" -o tsv
+```
+
+(`az rest` because `az monitor log-analytics query` needs an extension. Console logs reach
+the workspace a few minutes after the job ends.)
+
+Expected: `api_identity-…` and `worker_identity-…` each in `db_datareader` and
+`db_datawriter` only, and `migrator_identity-…` in `db_owner`.
 
 **Hold duration.** The api's `Reservation__HoldFor` is `00:00:30`: the deployed
 environment is the demo. The code's own default is ten minutes. `Outbox__Lease` is
@@ -301,18 +342,6 @@ When abandoning an environment entirely rather than tidying it,
 ## Deliberately not done yet
 
 Listed so a reader does not mistake these for oversights.
-
-**The API and worker are `db_owner`, though they only read and write rows.** Every
-`*-roles-sql` module in `infra/` ends with `ALTER ROLE db_owner ADD MEMBER`, for the
-API and worker as well as the migrator. Only the migrator needs DDL; the API and worker
-need only `db_datareader` and `db_datawriter` (their raw SQL is `SET LOCK_TIMEOUT` and
-lock hints, which need no extra permission). That is Aspire's default, not a choice:
-in `Aspire.Hosting.Azure.Sql` 13.6.3 the role is a literal inside the generated deployment
-script, and `WithRoleAssignments` takes Azure RBAC roles, not database roles. Editing
-the modules by hand would be erased by the next `azd infra gen`. Narrowing it properly
-means replacing Aspire's role script for those two identities with one written in the
-AppHost, or a newer Aspire that exposes the role. Until then, a compromised API can
-drop tables.
 
 **Migrations run after the new code unless you deploy the migrator first.** They
 live in their own project, `Kvytok.MigrationService`, deployed as the `migrator`

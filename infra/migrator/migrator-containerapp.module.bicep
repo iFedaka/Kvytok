@@ -11,6 +11,10 @@ param migrator_identity_outputs_id string
 
 param sql_outputs_sqlserverfqdn string
 
+param api_identity_outputs_principalname string
+
+param worker_identity_outputs_principalname string
+
 param migrator_identity_outputs_clientid string
 
 param aspire_env_outputs_azure_container_registry_endpoint string
@@ -65,6 +69,14 @@ resource migrator 'Microsoft.App/jobs@2025-07-01' = {
             {
               name: 'KVYTOK_DATABASENAME'
               value: 'kvytok'
+            }
+            {
+              name: 'Database__ReadWriteUsers__0'
+              value: api_identity_outputs_principalname
+            }
+            {
+              name: 'Database__ReadWriteUsers__1'
+              value: worker_identity_outputs_principalname
             }
             {
               name: 'AZURE_CLIENT_ID'

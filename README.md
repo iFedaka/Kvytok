@@ -25,6 +25,8 @@ shows what is built and what comes next.
 - [x] GitHub Actions: build and tests, CI badge in this README
 - [x] Deployed to Azure Container Apps with `azd`; see the [deployment runbook](docs/deploy.md)
 - [x] Migrations as a separate Container Apps job, run by azd after each deploy
+- [x] Least-privilege database roles: the migrator narrows the Api and Worker from Aspire's
+      `db_owner` to reading and writing rows; see [Database roles](docs/deploy.md#database-roles)
 - [x] Health checks on a separate port behind a key, used by the platform's liveness and readiness probes
 - [x] Infrastructure as code in the repository (Bicep generated from the AppHost)
 - [x] Service Bus through Aspire; reserving a seat publishes "reservation created" and
