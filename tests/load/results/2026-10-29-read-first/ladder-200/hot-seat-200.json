@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-10-29T12:24:55.368Z",
+  "baseUrl": "https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io",
+  "contenders": 200,
+  "created": 1,
+  "conflicts": 199,
+  "unexpected": 0,
+  "doubleBookings": 0,
+  "winnerMs": 101.5211,
+  "loser": {
+    "p(99)": 221.477256,
+    "max": 249.8884,
+    "min": 33.4011,
+    "med": 75.6735,
+    "p(95)": 180.58906
+  },
+  "baselineWin": {
+    "p(95)": 196.868385000001,
+    "p(99)": 1257.9816769999982,
+    "max": 1523.26,
+    "min": 59.4691,
+    "med": 77.2646
+  },
+  "baselineLoss": {
+    "min": 33.9062,
+    "med": 35.532650000000004,
+    "p(95)": 43.3679,
+    "p(99)": 43.63846,
+    "max": 43.7061
+  },
+  "startSkew": {
+    "max": 9,
+    "min": 0,
+    "med": 7,
+    "p(95)": 9,
+    "p(99)": 9
+  },
+  "answeredAfter": {
+    "p(95)": 323.3999999999995,
+    "p(99)": 353,
+    "max": 381,
+    "min": 126,
+    "med": 209
+  },
+  "tlsHandshake": {
+    "max": 152.3306,
+    "min": 33.2075,
+    "med": 87.13040000000001,
+    "p(95)": 144.90744999999998,
+    "p(99)": 150.16269599999998
+  },
+  "thresholdsPassed": true
+}

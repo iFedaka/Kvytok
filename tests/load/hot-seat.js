@@ -134,9 +134,14 @@ export function handleSummary(data) {
     const ms = (name, stat) => (m[name] && m[name].values[stat] !== undefined
         ? `${Math.round(m[name].values[stat])} ms` : '—');
     const wins = count('reserve_created');
+    // the Api's build, commit hash included, so each result names the code it measured;
+    // handleSummary gets no data from setup, so it is read here, a moment after the burst
+    const root = http.get(`${BASE_URL}/`, { timeout: '30s' });
+    const apiVersion = root.status === 200 ? root.json('version') : null;
     const result = {
         timestamp: new Date().toISOString(),
         baseUrl: BASE_URL,
+        apiVersion,
         contenders: CONTENDERS,
         created: wins,
         conflicts: count('reserve_conflict'),
@@ -154,7 +159,7 @@ export function handleSummary(data) {
     };
 
     const table = [
-        `Hot seat, ${CONTENDERS} contenders, ${result.timestamp}`,
+        `Hot seat, ${CONTENDERS} contenders, ${result.timestamp}, Api ${apiVersion || 'version unknown'}`,
         '',
         '| Metric | Value |',
         '| --- | --- |',
