@@ -295,5 +295,6 @@ k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
 ## Stack
 
 .NET 10 · ASP.NET Core minimal APIs · EF Core · .NET Aspire · Azure SQL · Azure
-Service Bus · Azure Cache for Redis · Application Insights ·
-Azure Container Apps · Bicep · GitHub Actions
+Service Bus · Azure Container Apps · KEDA · Bicep · GitHub Actions · Testcontainers · k6
+
+Planned: Azure Cache for Redis · Application Insights ([Status](#status)).
