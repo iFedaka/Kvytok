@@ -7,8 +7,9 @@ actually succeeded rather than merely finished.
 ## What gets deployed
 
 Two Container Apps (`api`, `worker`), one Container Apps job (`migrator`), one
-Azure SQL database, a Container Registry, a Container Apps environment and a Log
-Analytics workspace, all into the resource group `rg-kvytok-dev` in
+Azure SQL database, a Container Registry, a Container Apps environment, a Log
+Analytics workspace and an Application Insights component that stores its data in
+that same workspace, all into the resource group `rg-kvytok-dev` in
 **Sweden Central**.
 
 ```powershell
@@ -208,6 +209,27 @@ seats, pay for one. Within about a minute the paid reservation reads `Confirmed`
 and the other `Expired`, its seat `Free` in the event's seat map.
 
 **Logs.** Both apps should be writing to Log Analytics.
+
+**Telemetry.** The api, worker and migrator export traces, metrics and logs to
+Application Insights. ServiceDefaults turns the exporter on only when
+`APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so an app missing the variable
+sends nothing and logs no error. The component has local auth disabled: the
+connection string's key is refused, and each app signs in as its own identity,
+which holds Monitoring Metrics Publisher on the component and nothing more. A
+missing role fails the same quiet way, because the exporter reports its errors
+through its own event source rather than the app's log. After a request to the
+API, the component's Live Metrics shows it right away. Transaction search and
+Logs take a few minutes:
+
+```powershell
+az resource list -g rg-kvytok-dev --resource-type Microsoft.Insights/components `
+  --query "[].id" -o tsv |
+  ForEach-Object { az resource show --ids $_ --query "{name:name, localAuthDisabled:properties.DisableLocalAuth, workspace:properties.WorkspaceResourceId}" -o table }
+```
+
+Expected: one component, `localAuthDisabled` `True`, with `workspace` pointing to
+the environment's `aspireenvlaw-…` workspace. A second workspace means the sharing in the AppHost
+was lost, and teardown then has twice as many workspaces to purge.
 
 ## When the app looks dead
 

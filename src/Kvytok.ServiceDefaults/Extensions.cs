@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
+using Azure.Identity;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http;
@@ -94,12 +96,14 @@ public static class Extensions
             builder.Services.AddOpenTelemetry().UseOtlpExporter();
         }
 
-        // Uncomment the following lines to enable the Azure Monitor exporter (requires the Azure.Monitor.OpenTelemetry.AspNetCore package)
-        //if (!string.IsNullOrEmpty(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
-        //{
-        //    builder.Services.AddOpenTelemetry()
-        //       .UseAzureMonitor();
-        //}
+        // The AppHost sets this when the app references Application Insights; tests and bare runs leave it unset
+        if (!string.IsNullOrEmpty(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
+        {
+            // The component refuses the connection string's key; ingestion needs a token for the app's
+            // identity, chosen by AZURE_TOKEN_CREDENTIALS like every other Azure client here
+            builder.Services.AddOpenTelemetry()
+               .UseAzureMonitor(options => options.Credential = new DefaultAzureCredential());
+        }
 
         return builder;
     }

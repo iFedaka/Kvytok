@@ -17,6 +17,8 @@ param messaging_outputs_servicebusendpoint string
 
 param messaging_outputs_servicebushostname string
 
+param insights_outputs_appinsightsconnectionstring string
+
 param api_identity_outputs_clientid string
 
 @secure()
@@ -143,6 +145,10 @@ resource api 'Microsoft.App/containerApps@2025-10-02-preview' = {
             {
               name: 'RESERVATIONS_QUEUENAME'
               value: 'reservations'
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: insights_outputs_appinsightsconnectionstring
             }
             {
               name: 'Reservation__HoldFor'

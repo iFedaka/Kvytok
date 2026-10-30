@@ -11,6 +11,8 @@ param migrator_identity_outputs_id string
 
 param sql_outputs_sqlserverfqdn string
 
+param insights_outputs_appinsightsconnectionstring string
+
 param api_identity_outputs_principalname string
 
 param worker_identity_outputs_principalname string
@@ -69,6 +71,10 @@ resource migrator 'Microsoft.App/jobs@2025-07-01' = {
             {
               name: 'KVYTOK_DATABASENAME'
               value: 'kvytok'
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: insights_outputs_appinsightsconnectionstring
             }
             {
               name: 'Database__ReadWriteUsers__0'

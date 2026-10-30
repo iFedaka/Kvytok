@@ -285,12 +285,14 @@ k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
 - **Single region, no DR.** The naming and infrastructure assume one region on purpose;
   multi-region would change the design and the bill without changing the lesson.
 - **No payment provider.** Payment confirmation is modelled as an incoming message.
-- **No Key Vault, because nothing here authenticates with a secret.** SQL and Service Bus
-  are both reached through managed identities (Service Bus has local auth disabled), so
-  there are no connection strings to keep. The one secret that exists is the health probe
-  key, a Container App secret that the platform's probe configuration repeats in plain
-  text anyway, because probe headers cannot reference secrets. A vault with nothing in it
-  would be decoration.
+- **No Key Vault, because nothing here authenticates with a secret.** SQL, Service Bus
+  and Application Insights are all reached through managed identities (Service Bus and
+  Application Insights have local auth disabled), so there are no credentials to keep.
+  The Application Insights connection string each app receives only names the endpoint;
+  whether telemetry is accepted is decided by the app's Entra ID token. The one secret
+  that exists is the health probe key, a Container App secret that the platform's probe
+  configuration repeats in plain text anyway, because probe headers cannot reference
+  secrets. A vault with nothing in it would be decoration.
 
 ## Stack
 

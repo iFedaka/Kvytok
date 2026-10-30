@@ -1,7 +1,16 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-builder.AddAzureContainerAppEnvironment("aspire-env")
+var environment = builder.AddAzureContainerAppEnvironment("aspire-env")
     .WithDashboard(false);
+
+// Traces, metrics and logs from every service. Locally Aspire provisions it with a workspace of its
+// own; in Azure it shares the environment's, which is one fewer workspace to purge on teardown.
+var insights = builder.AddAzureApplicationInsights("insights")
+    .RequiringEntraId();
+if (builder.ExecutionContext.IsPublishMode)
+{
+    insights.WithLogAnalyticsWorkspace(environment.GetOutput("AZURE_LOG_ANALYTICS_WORKSPACE_ID"));
+}
 
 var sql = builder
     .AddAzureSqlServer("sql")
@@ -12,6 +21,7 @@ var db  = sql.AddDatabase("kvytok");
 var migrator = builder
     .AddProject<Projects.Kvytok_MigrationService>("migrator")
     .WithReference(db)
+    .SendsTelemetryTo(insights)
     .WaitFor(db)
     .PublishAsAzureContainerAppJob();
 
@@ -26,6 +36,7 @@ var api = builder
     .AddProject<Projects.Kvytok_Api>("api")
     .WithReference(db)
     .WithReference(reservationsQueue)
+    .SendsTelemetryTo(insights)
     .WaitForCompletion(migrator)
     // This is the demo environment: nobody watches a screen for ten minutes.
     // The Api's own default is the ten minutes the README describes.
@@ -44,6 +55,7 @@ var worker = builder
     .AddProject<Projects.Kvytok_Worker>("worker")
     .WithReference(db)
     .WithReference(reservationsQueue)
+    .SendsTelemetryTo(insights)
     .WaitForCompletion(migrator)
     .PublishAsAzureContainerApp((infra, app) =>
     {
@@ -58,6 +70,7 @@ migrator.NarrowsToReadWrite(api, worker);
 // exists only in Azure, and probing for it on a laptop can hang for minutes.
 if (builder.ExecutionContext.IsRunMode)
 {
+    migrator.WithEnvironment("AZURE_TOKEN_CREDENTIALS", "dev");
     api.WithEnvironment("AZURE_TOKEN_CREDENTIALS", "dev");
     worker.WithEnvironment("AZURE_TOKEN_CREDENTIALS", "dev");
 }

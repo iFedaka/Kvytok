@@ -37,6 +37,15 @@ module api_identity 'api-identity/api-identity.module.bicep' = {
     location: location
   }
 }
+module api_roles_insights 'api-roles-insights/api-roles-insights.module.bicep' = {
+  name: 'api-roles-insights'
+  scope: rg
+  params: {
+    insights_outputs_name: insights.outputs.name
+    location: location
+    principalId: api_identity.outputs.principalId
+  }
+}
 module api_roles_messaging 'api-roles-messaging/api-roles-messaging.module.bicep' = {
   name: 'api-roles-messaging'
   scope: rg
@@ -73,6 +82,14 @@ module aspire_env_acr 'aspire-env-acr/aspire-env-acr.module.bicep' = {
     location: location
   }
 }
+module insights 'insights/insights.module.bicep' = {
+  name: 'insights'
+  scope: rg
+  params: {
+    aspire_env_outputs_azure_log_analytics_workspace_id: aspire_env.outputs.AZURE_LOG_ANALYTICS_WORKSPACE_ID
+    location: location
+  }
+}
 module messaging 'messaging/messaging.module.bicep' = {
   name: 'messaging'
   scope: rg
@@ -85,6 +102,15 @@ module migrator_identity 'migrator-identity/migrator-identity.module.bicep' = {
   scope: rg
   params: {
     location: location
+  }
+}
+module migrator_roles_insights 'migrator-roles-insights/migrator-roles-insights.module.bicep' = {
+  name: 'migrator-roles-insights'
+  scope: rg
+  params: {
+    insights_outputs_name: insights.outputs.name
+    location: location
+    principalId: migrator_identity.outputs.principalId
   }
 }
 module migrator_roles_sql 'migrator-roles-sql/migrator-roles-sql.module.bicep' = {
@@ -110,6 +136,15 @@ module worker_identity 'worker-identity/worker-identity.module.bicep' = {
   scope: rg
   params: {
     location: location
+  }
+}
+module worker_roles_insights 'worker-roles-insights/worker-roles-insights.module.bicep' = {
+  name: 'worker-roles-insights'
+  scope: rg
+  params: {
+    insights_outputs_name: insights.outputs.name
+    location: location
+    principalId: worker_identity.outputs.principalId
   }
 }
 module worker_roles_messaging 'worker-roles-messaging/worker-roles-messaging.module.bicep' = {
@@ -141,6 +176,7 @@ output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.
 output ASPIRE_ENV_AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_MANAGED_IDENTITY_ID
 output AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN string = aspire_env.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = aspire_env.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT
+output INSIGHTS_APPINSIGHTSCONNECTIONSTRING string = insights.outputs.appInsightsConnectionString
 output MESSAGING_NAME string = messaging.outputs.name
 output MESSAGING_SERVICEBUSENDPOINT string = messaging.outputs.serviceBusEndpoint
 output MESSAGING_SERVICEBUSHOSTNAME string = messaging.outputs.serviceBusHostName

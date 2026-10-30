@@ -15,6 +15,8 @@ param messaging_outputs_servicebusendpoint string
 
 param messaging_outputs_servicebushostname string
 
+param insights_outputs_appinsightsconnectionstring string
+
 param worker_identity_outputs_clientid string
 
 param messaging_outputs_name string
@@ -91,6 +93,10 @@ resource worker 'Microsoft.App/containerApps@2025-10-02-preview' = {
             {
               name: 'RESERVATIONS_QUEUENAME'
               value: 'reservations'
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: insights_outputs_appinsightsconnectionstring
             }
             {
               name: 'AZURE_CLIENT_ID'
