@@ -42,9 +42,12 @@ shows what is built and what comes next.
       retry with exponential backoff, dead-letter queue after five attempts
 - [x] Load test with k6: up to 800 parallel requests for one seat against the deployed
       environment; numbers in [Results](#results)
+- [x] Application Insights through Aspire: one trace from the Api across Service Bus to the
+      Worker, and messages the outbox relay sends late kept in the trace that owed them; see
+      [One trace across the queue](#one-trace-across-the-queue)
 
 **Planned, in order**
-- [ ] Application Insights through Aspire: end-to-end distributed trace, custom metric and dashboard
+- [ ] Application Insights: custom metric and dashboard
 - [ ] Redis cache-aside
 - [ ] Seat-grid demo page
 - [ ] C4 diagram, levels 1–2
@@ -104,10 +107,10 @@ the same database, so publishing an event and changing state happen in one trans
 **Messaging** — Azure Service Bus. The Api never calls the Worker; they share a
 message contract and nothing else.
 
-**Operations** — SQL and Service Bus reached through managed identities, with no
-connection secrets to store, Redis for
+**Operations** — SQL, Service Bus and Application Insights reached through managed
+identities, with no connection secrets to store, Redis for
 cache-aside on the event list, Application Insights with distributed tracing across
-the queue boundary, health endpoints `/health` and `/alive` on a port the public
+the queue boundary ([One trace across the queue](#one-trace-across-the-queue)), health endpoints `/health` and `/alive` on a port the public
 ingress does not route to.
 
 ## Decisions
@@ -123,8 +126,10 @@ ingress does not route to.
   per-key ordering to preserve, and duplicate detection has to stay off (see the outbox below).
   The namespace is Standard because that is what Aspire's `AddAzureServiceBus` provisions, not
   by choice: nothing here needs more than Basic, which has no topics, sessions, transactions or
-  duplicate detection. The bill shows Service Bus at $0.00 every day from 23 to 29 October, so
-  there is nothing to save yet; if a base charge appears, Basic is the tier to move to.
+  duplicate detection. Up to 2 November the bill shows Service Bus at $0.00, and only its
+  messaging-operations meter: the Standard base charge, billed hourly, has not appeared at all,
+  for reasons not yet understood. Until a full month's invoice says otherwise, assume it will,
+  and that Basic is where the saving is.
 - **"Reservation created" is published to wake the worker, not to tell it anything.** The
   worker ignores its content. The Worker scales to zero and KEDA wakes it on queue length,
   polled every 10 seconds, so a payment arriving at a cold worker waits for a poll plus a
@@ -147,7 +152,10 @@ ingress does not route to.
   row does harm only while someone wants that seat, and that person's request wakes the Api,
   whose timer drains the outbox. Replicas claim disjoint batches under a lease, and startup
   refuses a configuration whose recovery time does not fit inside the hold. Duplicate detection
-  stays off because it would drop the worker's retries. [ADR 0001](docs/adr/0001-outbox-relay-in-the-api.md)
+  stays off because it would drop the worker's retries. Only reserving goes through the outbox.
+  The payment webhook writes nothing, so it has no transaction to share: it sends straight to
+  the queue and answers `503` if it cannot, and the provider, which retries a webhook that did
+  not succeed, is what makes the payment durable. [ADR 0001](docs/adr/0001-outbox-relay-in-the-api.md)
 - **The worker's message key is checked under a lock, not by racing to insert it.** A second
   copy of a message waits for the first and finds its record; racing to insert is also correct
   but logs every harmless duplicate as an error. The cost is a measured ceiling of about 45
@@ -242,6 +250,53 @@ What the numbers say:
 
 TODO: 10-second GIF — two browser windows booking the same seat, one wins.
 
+### One trace across the queue
+
+A payment against the deployed environment, as Application Insights shows it:
+
+![A payment's end-to-end transaction in Application Insights: the Api's request, the Service Bus send, and the Worker's handling of the message in one trace](docs/images/trace-payment.png)
+
+The Api accepts the payment (`202`) and puts a message on the queue. The Worker's
+`ProcessMessage` starts as the send ends, and its handling (`Handle PaymentReceived`, six
+SQL calls) and the message's completion sit inside the same operation, 173 ms from the
+request's first byte to the completion. In the raw telemetry the Worker's span has the
+message's span (`Message`, one per message, beside `ServiceBusSender.Send`) as its parent,
+and carries a link to it as well. The SDK's documentation describes the link; the parent
+is what puts both apps in one trace rather than two that point at each other. Three
+things make it so. The Azure SDK emits Service Bus spans only
+behind `Azure.Experimental.EnableActivitySource`, set in both apps. The sender stamps each
+message with its span (`Diagnostic-Id`). And `ServiceBusProcessor` continues from that
+stamp, where a hand-written receive loop would only have linked to it.
+
+The outbox would break the chain where it matters most. The in-process send runs inside
+the request, so it inherits the trace. The relay runs on a timer, so a message it sends
+late would start a trace of its own, cut off from the action that owed it. So the outbox
+row stores the request's span as a W3C `traceparent`, written in the same transaction,
+and the relay sends each row under an `OutboxRelay.Send` span parented to it. A message
+that went out late stays in its request's trace and shows that it was relayed. An
+integration test forces the immediate send to fail and checks that the relay's spans join
+the request's trace; the picture above is the immediate path, which needs none of this.
+
+The expiry joins the reservation's trace on purpose: the reservation is what caused it.
+Its trace therefore lasts as long as the hold (thirty seconds in the demo environment,
+ten minutes by default). That is correct, but it reads like a slow request at first
+glance; the alternative, a new trace that links back, would hide the cause one click
+further away. The screenshot shows a payment instead, which does not use the outbox: a
+payment the Api cannot publish is refused with `503`, for the provider to retry.
+
+The longest bar is not the work. Settling the message (`ServiceBusReceiver.Complete`, a
+call to the broker) took 77 ms of `ProcessMessage`'s 128, against 50 ms for the handler
+and its six SQL calls. The same call took 24 ms in an earlier trace, so it is broker
+latency that varies from message to message, and on a fast handler it is most of the
+time a message spends in the Worker.
+
+Two things to know when reading these traces. The processor's
+`ServiceBusReceiver.Receive` spans are not exported: each is a long poll that measures
+time spent waiting for the queue, and shown beside a trace it stretches the timeline to
+its own length. And both apps scale to zero, so the first message after
+an idle period carries a gap while the Worker starts, plus a managed-identity token
+fetch (`GetToken`) in each app. The trace above is from warm replicas.
+
 ## Running it
 
 Locally, with .NET Aspire orchestrating the dependencies in containers:
@@ -297,6 +352,7 @@ k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
 ## Stack
 
 .NET 10 · ASP.NET Core minimal APIs · EF Core · .NET Aspire · Azure SQL · Azure
-Service Bus · Azure Container Apps · KEDA · Bicep · GitHub Actions · Testcontainers · k6
+Service Bus · Azure Container Apps · Application Insights · KEDA · Bicep · GitHub
+Actions · Testcontainers · k6
 
-Planned: Azure Cache for Redis · Application Insights ([Status](#status)).
+Planned: Azure Cache for Redis ([Status](#status)).

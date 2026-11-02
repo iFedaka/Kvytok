@@ -298,8 +298,11 @@ notification, not a cap.
 
 The Container Registry (Basic) costs a flat few dollars a month regardless of
 use: 17 cents a day on the bill. The Service Bus namespace is Standard (Aspire's
-default, not a choice; nothing here needs more than Basic), yet the bill showed it at
-$0.00 every day from 23 to 29 October. If a base charge starts appearing, move to Basic. Container Apps compute is free up to a monthly grant and billed per second
+default, not a choice; nothing here needs more than Basic). Up to 2 November the bill
+showed only its messaging-operations meter, at $0.00; the Standard base charge, billed
+hourly, had not appeared at all, and why is not known. Check the November invoice for it
+once the month has closed, around 1 December 2026, before trusting the zero; if it is
+there, move to Basic. Container Apps compute is free up to a monthly grant and billed per second
 after it; both apps sit at min 0 replicas, so idle time is close to free. The API
 wakes on an HTTP request, the worker on a message ready in the queue.
 
