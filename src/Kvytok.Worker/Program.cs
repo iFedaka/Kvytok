@@ -1,10 +1,12 @@
 using Azure.Messaging.ServiceBus;
 using Kvytok.Domain;
 using Kvytok.Worker;
+using OpenTelemetry.Trace;
 
 var builder = Host.CreateApplicationBuilder(args);
 
 builder.AddServiceDefaults();
+builder.Services.AddOpenTelemetry().WithTracing(tracing => tracing.AddProcessor(new ReceiveSpanFilter()));
 builder.AddSqlServerDbContext<KvytokDbContext>("kvytok",
     configureDbContextOptions: o => o.AddKvytokInterceptors());
 

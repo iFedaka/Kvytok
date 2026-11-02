@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Contracts;
@@ -14,9 +15,16 @@ public sealed class ReservationMessageHandler(
     ReservationLifecycle lifecycle,
     ILogger<ReservationMessageHandler> logger)
 {
+    // The app's own source, which ServiceDefaults already traces
+    private static readonly ActivitySource Tracing = new(typeof(ReservationMessageHandler).Assembly.GetName().Name!);
+
     /// <exception cref="UnprocessableMessageException">No retry can help this message.</exception>
     public async Task HandleAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken)
     {
+        // The SDK's span says a message was processed, not which; this one names it in the trace
+        using var span = Tracing.StartActivity($"Handle {message.Subject}");
+        span?.SetTag("messaging.message.id", message.MessageId);
+
         switch (message.Subject)
         {
             case nameof(PaymentReceived):
