@@ -34,6 +34,11 @@ public sealed class OutboxPublisher(
 
         try
         {
+            if (options.Value.FailImmediatePublish)
+                throw new ServiceBusException(
+                    $"Not sent: {OutboxOptions.Section}:{nameof(OutboxOptions.FailImmediatePublish)} is on",
+                    ServiceBusFailureReason.ServiceCommunicationProblem);
+
             // One batch to one queue is atomic: a reservation's event never goes without its expiry
             await queue.SendMessagesAsync(messages.Select(ToServiceBusMessage), sendTimeout.Token);
         }

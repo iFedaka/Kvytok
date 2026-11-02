@@ -23,6 +23,14 @@ public sealed class OutboxOptions
     public TimeSpan Lease { get; set; }
 
     /// <summary>
+    /// Failure injection, off unless set: the request's own publish fails as an unreachable broker
+    /// would, so every row is left owed and goes out through the relay instead. Exercises the path
+    /// that otherwise needs an outage, against nothing but this app; payments do not use the
+    /// outbox and are unaffected. See "Exercising the relay" in docs/deploy.md.
+    /// </summary>
+    public bool FailImmediatePublish { get; set; }
+
+    /// <summary>
     /// How long a sender may act on rows it holds, sending and then recording that it sent: never
     /// past the lease, since a claim must outlive the operation it protects, and that operation
     /// ends when the send is written down, not when the broker accepts it.

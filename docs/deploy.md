@@ -231,6 +231,34 @@ Expected: one component, `localAuthDisabled` `True`, with `workspace` pointing t
 the environment's `aspireenvlaw-…` workspace. A second workspace means the sharing in the AppHost
 was lost, and teardown then has twice as many workspaces to purge.
 
+## Exercising the relay
+
+The relay only sends what the request's own publish could not, so in normal running it has
+nothing to do. To make it work on purpose, for a check or a screenshot of a relayed trace,
+turn on the API's failure injection:
+
+```powershell
+az containerapp update -g rg-kvytok-dev -n api --set-env-vars Outbox__FailImmediatePublish=true
+```
+
+Every reservation's publish then fails as an unreachable broker would: the API logs
+"were not published and remain owed", still answers `201`, and leaves both rows in the
+outbox. The relay claims them once they are older than the lease and sends them on its next
+drain, 5 to 15 seconds after the request, then logs "Relayed 2 owed outbox messages".
+In Application Insights the reservation's trace has no `ServiceBusSender.Send` of its own;
+an `OutboxRelay.Send` span follows a few seconds later, with the Worker's
+`Handle ReservationCreated` under it and `Handle ReservationExpiryDue` at the end of the hold.
+
+Nothing else is affected: payments do not use the outbox, and the queue stays open. Turn it
+off when done:
+
+```powershell
+az containerapp update -g rg-kvytok-dev -n api --remove-env-vars Outbox__FailImmediatePublish
+```
+
+Each update creates a new revision, so the first request after either one meets a cold API.
+The setting is not in the deployed template, so the next `azd deploy` removes it too.
+
 ## When the app looks dead
 
 Both apps scale to zero. The first request after an idle period wakes a container
