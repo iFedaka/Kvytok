@@ -11,6 +11,8 @@ public sealed class OutboxMessage
     // Service Bus caps both at 128 characters
     public const int MaxMessageIdLength = 128;
     public const int MaxSubjectLength = 128;
+    // A W3C traceparent: version, trace id, span id and flags, always this long
+    public const int MaxTraceParentLength = 55;
 
     /// <summary>Identity, so the clustered order is the order the messages were owed in.</summary>
     public long Id { get; set; }
@@ -24,6 +26,13 @@ public sealed class OutboxMessage
     /// delivered at once, rather than due a full delay after whenever the publish happened.
     /// </summary>
     public DateTimeOffset? DeliverAt { get; set; }
+    /// <summary>
+    /// The span that owed the message, as a W3C traceparent, so whoever sends it continues that
+    /// trace. The request's own send runs inside it anyway; the relay runs on a timer and would
+    /// otherwise start a trace of its own, cut off from the action that caused the message.
+    /// Null when nothing was being traced.
+    /// </summary>
+    public string? TraceParent { get; set; }
     /// <summary>Set by the database.</summary>
     public DateTimeOffset CreatedAt { get; set; }
     /// <summary>Null until the broker has accepted it.</summary>

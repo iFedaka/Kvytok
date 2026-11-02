@@ -80,6 +80,11 @@ namespace Kvytok.Domain.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<string>("TraceParent")
+                        .HasMaxLength(55)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(55)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAt")

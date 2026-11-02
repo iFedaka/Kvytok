@@ -50,6 +50,7 @@ public sealed class KvytokDbContext(DbContextOptions<KvytokDbContext> options)
             e.Property(x => x.MessageId).HasMaxLength(OutboxMessage.MaxMessageIdLength).IsRequired();
             e.Property(x => x.Subject).HasMaxLength(OutboxMessage.MaxSubjectLength).IsRequired();
             e.Property(x => x.Body).IsRequired();
+            e.Property(x => x.TraceParent).HasMaxLength(OutboxMessage.MaxTraceParentLength).IsUnicode(false);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSDATETIMEOFFSET()");
             // What is still owed stays small however large the table grows, so the relay's
             // claim reads only owed rows and sent ones can be kept as a record of what went out

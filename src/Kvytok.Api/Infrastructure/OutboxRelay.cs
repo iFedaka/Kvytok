@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,9 @@ public sealed class OutboxRelay(
     // On a timer, not on the create path, so that a request of any kind drains it
     public static readonly TimeSpan DrainEvery = TimeSpan.FromSeconds(10);
     private const int BatchSize = 100;
+
+    // The app's own source, which ServiceDefaults already traces
+    private static readonly ActivitySource Tracing = new(typeof(OutboxRelay).Assembly.GetName().Name!);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -82,6 +86,7 @@ public sealed class OutboxRelay(
 
             try
             {
+                using var span = StartRelaySpan(row);
                 await queue.SendMessageAsync(OutboxPublisher.ToServiceBusMessage(row), sending.Token);
                 sent.Add(row.Id);
             }
@@ -103,6 +108,20 @@ public sealed class OutboxRelay(
         }
 
         return sent.Count == BatchSize;
+    }
+
+    /// <summary>
+    /// Continues the trace of the request that owed the row, however long ago that was, so the send
+    /// and the worker's handling of the message stay in it. The SDK stamps the message from whatever
+    /// span is current, which here would otherwise be none at all.
+    /// </summary>
+    private static Activity? StartRelaySpan(OutboxMessage row)
+    {
+        ActivityContext.TryParse(row.TraceParent, null, out var owedBy);
+        var span = Tracing.StartActivity("OutboxRelay.Send", ActivityKind.Internal, owedBy);
+        span?.SetTag("messaging.message.id", row.MessageId);
+        span?.SetTag("kvytok.outbox.id", row.Id);
+        return span;
     }
 
     /// <summary>

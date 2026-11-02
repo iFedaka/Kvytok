@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -43,6 +44,9 @@ public sealed class OutboxInterceptor : SaveChangesInterceptor
             .SelectMany(e => e.Entity.TakePendingMessages())
             .ToList();
 
+        // The span saving the change is the one that caused the message; the row carries it to whichever sender
+        var traceParent = Activity.Current is { IdFormat: ActivityIdFormat.W3C } current ? current.Id : null;
+
         foreach (var message in pending)
         {
             context.Add(new OutboxMessage
@@ -51,6 +55,7 @@ public sealed class OutboxInterceptor : SaveChangesInterceptor
                 Subject = message.Body.GetType().Name,
                 Body = JsonSerializer.Serialize(message.Body, message.Body.GetType(), JsonSerializerOptions.Web),
                 DeliverAt = message.DeliverAt,
+                TraceParent = traceParent,
             });
         }
     }

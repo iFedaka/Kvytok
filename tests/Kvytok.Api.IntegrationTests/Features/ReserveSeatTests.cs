@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using Azure.Messaging.ServiceBus;
@@ -153,6 +154,50 @@ public sealed class ReserveSeatTests(ApiFixture api)
         Assert.Equal(body.ExpiresAt, expiry.ScheduledEnqueueTime);
         var rows = await OutboxFor(body.ReservationId);
         Assert.All(rows, r => Assert.Equal(api.Clock.GetUtcNow(), r.PublishedAt));
+    }
+
+    [Fact]
+    public async Task A_Relayed_Message_Continues_The_Trace_Of_The_Request_That_Owed_It()
+    {
+        var spans = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
+        // What OpenTelemetry does in the app: without a listener nothing is traced and nothing is captured
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Microsoft.AspNetCore" or "Kvytok.Api",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = spans.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        var eventId = await api.CreateEventAsync();
+        var brokerDown = true;
+        api.ReservationsQueue.FailWhen(m =>
+            brokerDown
+            && m.Subject == nameof(ReservationCreated)
+            && m.Body.ToObjectFromJson<ReservationCreated>(ApiFixture.Json)!.EventId == eventId);
+        var trace = ActivityTraceId.CreateRandom();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/events/{eventId}/reservations")
+        {
+            Content = JsonContent.Create(new ReserveSeatRequest(7, "holder@example.com")),
+        };
+        request.Headers.Add("traceparent", $"00-{trace}-{ActivitySpanId.CreateRandom()}-01");
+        var response = await api.Client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadFromJsonAsync<ReserveSeatResponse>(
+            ApiFixture.Json,
+            TestContext.Current.CancellationToken);
+        brokerDown = false;
+        await api.WithDbAsync(db => db.OutboxMessages
+            .Where(m => m.MessageId.StartsWith(body!.ReservationId.ToString()))
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.CreatedAt, m => m.CreatedAt.AddMinutes(-1))));
+
+        await api.Relay.DrainAsync(TestContext.Current.CancellationToken);
+
+        Assert.All(await OutboxFor(body!.ReservationId), r => Assert.Contains(trace.ToString(), r.TraceParent));
+        var relayed = spans.Where(s => s.OperationName == "OutboxRelay.Send"
+                                       && s.GetTagItem("messaging.message.id") is string id
+                                       && id.StartsWith(body.ReservationId.ToString()))
+            .ToList();
+        Assert.Equal(2, relayed.Count);
+        Assert.All(relayed, s => Assert.Equal(trace, s.TraceId));
     }
 
     [Fact]
