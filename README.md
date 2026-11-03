@@ -294,12 +294,19 @@ at the wrong offsets, so the times are worth reading from the telemetry instead:
 | 23.5 s | the Worker handles "reservation created", having started from zero |
 | 30.07 s | the expiry is handled, on time for the 30-second hold despite the late send |
 
+The last row is the one that matters. The expiry message carries the time it is due, and
+the broker holds it until then. If the relay sent it late without that time, the broker
+would deliver it at once and release the seat while the holder could still pay. The trace
+shows the time surviving a late send once; an integration test checks it on every run,
+asserting that a relayed expiry is still due at the reservation's `ExpiresAt`.
+
 The expiry joins the reservation's trace on purpose: the reservation is what caused it.
 Its trace therefore lasts as long as the hold (thirty seconds in the demo environment,
 ten minutes by default). That is correct, but it reads like a slow request at first
 glance; the alternative, a new trace that links back, would hide the cause one click
-further away. The screenshot shows a payment instead, which does not use the outbox: a
-payment the Api cannot publish is refused with `503`, for the provider to retry.
+further away. That is why the first screenshot is a payment, which lasts milliseconds rather
+than a hold and does not use the outbox: a payment the Api cannot publish is refused with
+`503`, for the provider to retry.
 
 The longest bar is not the work. Settling the message (`ServiceBusReceiver.Complete`, a
 call to the broker) took 77 ms of `ProcessMessage`'s 128, against 50 ms for the handler
@@ -312,7 +319,8 @@ Two things to know when reading these traces. The processor's
 time spent waiting for the queue, and shown beside a trace it stretches the timeline to
 its own length. And both apps scale to zero, so the first message after
 an idle period carries a gap while the Worker starts, plus a managed-identity token
-fetch (`GetToken`) in each app. The trace above is from warm replicas.
+fetch (`GetToken`) in each app. The payment's trace is from warm replicas; the relayed one
+is not, which is its 23.5 s row.
 
 ## Running it
 

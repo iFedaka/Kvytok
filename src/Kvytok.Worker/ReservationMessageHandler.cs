@@ -21,7 +21,10 @@ public sealed class ReservationMessageHandler(
     /// <exception cref="UnprocessableMessageException">No retry can help this message.</exception>
     public async Task HandleAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken)
     {
-        // The SDK's span says a message was processed, not which; this one names it in the trace
+        // The SDK's span says a message was processed, not which; this one names it in the trace.
+        // A name built from input is safe only because the set is closed: the Api is the queue's
+        // one sender and its subjects are the event type names below. A stray subject is
+        // dead-lettered after one span, and a sender with many would show up as many names.
         using var span = Tracing.StartActivity($"Handle {message.Subject}");
         span?.SetTag("messaging.message.id", message.MessageId);
 
