@@ -137,7 +137,9 @@ ingress does not route to.
   early. The bound: KEDA scales the worker back to zero five minutes after the queue empties,
   so only payments within about five minutes of the reservation benefit, half of a ten-minute
   hold. The price is a message and a wake-up on every reservation, including the ones
-  nobody pays. The time saved has not been measured; it is intent, not a result. With a
+  nobody pays. In the [relayed trace](#one-trace-across-the-queue) the handler takes 9 µs
+  and settling the message with the broker 56 ms, where the expiry's real work is 28 ms
+  against 24 ms to settle. The time saved has not been measured; it is intent, not a result. With a
   minimum of one worker replica the message would have no job left and could go.
 - **Scheduled messages rather than a sweep for expiry.** The broker holds each expiry until
   it is due, so there is no timer to own, and an expiry that finds the reservation already
@@ -275,7 +277,22 @@ row stores the request's span as a W3C `traceparent`, written in the same transa
 and the relay sends each row under an `OutboxRelay.Send` span parented to it. A message
 that went out late stays in its request's trace and shows that it was relayed. An
 integration test forces the immediate send to fail and checks that the relay's spans join
-the request's trace; the picture above is the immediate path, which needs none of this.
+the request's trace. The picture above is the immediate path, which needs none of this;
+the one below is a reservation whose immediate send was made to fail on purpose
+(`Outbox:FailImmediatePublish`, see [Exercising the relay](docs/deploy.md#exercising-the-relay)):
+
+![A reservation's trace in Application Insights: the request with the injected publish failure, then two OutboxRelay.Send spans, each with the message it sent and the Worker's handling of it](docs/images/trace-relayed.png)
+
+The request answers `201` and records the failure; both messages then go out under
+`OutboxRelay.Send`, inside the same trace. The portal's waterfall draws the Worker's spans
+at the wrong offsets, so the times are worth reading from the telemetry instead:
+
+| After the request | What happened |
+| --- | --- |
+| 0.02 s | the immediate publish fails; both rows stay owed |
+| 10.2 s | the relay sends both: the 5-second lease, then its next drain |
+| 23.5 s | the Worker handles "reservation created", having started from zero |
+| 30.07 s | the expiry is handled, on time for the 30-second hold despite the late send |
 
 The expiry joins the reservation's trace on purpose: the reservation is what caused it.
 Its trace therefore lasts as long as the hold (thirty seconds in the demo environment,
