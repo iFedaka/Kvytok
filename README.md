@@ -136,7 +136,8 @@ ingress does not route to.
   container start before it is confirmed. Publishing on every reservation starts that wait
   early. The bound: KEDA scales the worker back to zero five minutes after the queue empties,
   so only payments within about five minutes of the reservation benefit, half of a ten-minute
-  hold. The price is a message and a wake-up on every reservation, including the ones
+  hold. The demo shortens the hold to 30 seconds so expiry can be watched. With a 30-second
+  hold, every payment arrives within those five minutes. The price is a message and a wake-up on every reservation, including the ones
   nobody pays. In the [relayed trace](#one-trace-across-the-queue) the handler takes 9 µs
   and settling the message with the broker 56 ms, where the expiry's real work is 28 ms
   against 24 ms to settle. The time saved has not been measured; it is intent, not a result. With a
