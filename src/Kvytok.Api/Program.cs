@@ -45,6 +45,7 @@ builder.Services.AddOptions<ReservationOptions>()
     .BindConfiguration(ReservationOptions.Section)
     .Validate(o => o.HoldFor > TimeSpan.Zero, "Reservation:HoldFor must be a positive duration, e.g. 00:10:00.")
     .ValidateOnStart();
+builder.Services.AddSingleton<ReservationMetrics>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpoints(typeof(Program).Assembly);
 

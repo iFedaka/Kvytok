@@ -33,6 +33,7 @@ public sealed class ReserveSeatEndpoint : IEndpoint
         TimeProvider clock,
         IOptions<ReservationOptions> options,
         OutboxPublisher outbox,
+        ReservationMetrics metrics,
         CancellationToken cancellationToken)
     {
         var errors = Validate(request);
@@ -44,6 +45,17 @@ public sealed class ReserveSeatEndpoint : IEndpoint
         var strategy = db.Database.CreateExecutionStrategy();
         var (result, owed) = await strategy.ExecuteAsync(
             () => Reserve(db, eventId, request, clock.GetUtcNow() + options.Value.HoldFor, cancellationToken));
+
+        // Counted once the strategy is done, so a retried attempt is not counted twice
+        switch (result.Result)
+        {
+            case Created<ReserveSeatResponse>:
+                metrics.Held();
+                break;
+            case Conflict<ProblemDetails>:
+                metrics.SeatTaken();
+                break;
+        }
 
         // Published outside the strategy so a retried attempt can never send twice. The hold is
         // committed by now, so a failed send is not an error: the outbox still owes the messages.

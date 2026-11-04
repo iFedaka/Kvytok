@@ -12,6 +12,10 @@ if (builder.ExecutionContext.IsPublishMode)
     insights.WithLogAnalyticsWorkspace(environment.GetOutput("AZURE_LOG_ANALYTICS_WORKSPACE_ID"));
 }
 
+// Reservations per minute, latency and errors, read from whichever Application Insights this run has
+builder.AddBicepTemplate("dashboard", "dashboard.bicep")
+    .WithParameter("insightsId", insights.GetOutput("id"));
+
 var sql = builder
     .AddAzureSqlServer("sql")
     .RunAsContainer();

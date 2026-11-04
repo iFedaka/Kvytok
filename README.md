@@ -45,9 +45,10 @@ shows what is built and what comes next.
 - [x] Application Insights through Aspire: one trace from the Api across Service Bus to the
       Worker, and messages the outbox relay sends late kept in the trace that owed them; see
       [One trace across the queue](#one-trace-across-the-queue)
+- [x] Custom metric and dashboard: reservations per minute, the reservation endpoint's latency
+      and errors on one Azure dashboard, kept in Bicep; see [The dashboard](#the-dashboard)
 
 **Planned, in order**
-- [ ] Application Insights: custom metric and dashboard
 - [ ] Redis cache-aside
 - [ ] Seat-grid demo page
 - [ ] C4 diagram, levels 1–2
@@ -323,6 +324,24 @@ an idle period carries a gap while the Worker starts, plus a managed-identity to
 fetch (`GetToken`) in each app. The payment's trace is from warm replicas; the relayed one
 is not, which is its 23.5 s row.
 
+### The dashboard
+
+One Azure dashboard (`Kvytok` in the resource group) with three tiles, each a query on
+Application Insights in one-minute bins:
+
+- **Reservations per minute**, from a counter the Api adds to (`kvytok.reservations`): seats
+  held, and requests that found the seat already taken, stacked. A burst for one seat shows
+  as one hold on top of hundreds of `409`s.
+- **Reserve seat latency**: p50, p95 and p99 of `POST /events/{eventId}/reservations`, measured
+  in the Api, so without the network round trip that k6's numbers include.
+- **Errors per minute**, by app: failed requests and failed message handling. Application
+  Insights marks every `4xx` as failed, and a lost race is a `409`, so `4xx` is left out;
+  counted, a contended seat would look like an outage.
+
+The dashboard is Bicep ([dashboard.bicep](src/Kvytok.AppHost/dashboard.bicep)), added by the
+AppHost as a template, so it is provisioned with everything else and regenerated into `infra/`.
+Each tile defaults to the last four hours.
+
 ## Running it
 
 Locally, with .NET Aspire orchestrating the dependencies in containers:
@@ -331,8 +350,11 @@ Locally, with .NET Aspire orchestrating the dependencies in containers:
 dotnet run --project src/Kvytok.AppHost
 ```
 
-The Aspire dashboard lists every resource and its traces. No Azure subscription is
-needed for this path.
+The Aspire dashboard lists every resource and its traces. Only SQL Server runs in a
+container. Service Bus, Application Insights and [the dashboard](#the-dashboard) have no
+local stand-in here, so Aspire provisions them in a resource group of their own in your
+subscription, and this path needs `az login` and the subscription in the AppHost's
+user secrets (Aspire asks on the first run).
 
 On Azure, with the Azure Developer CLI:
 

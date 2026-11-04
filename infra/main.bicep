@@ -82,6 +82,14 @@ module aspire_env_acr 'aspire-env-acr/aspire-env-acr.module.bicep' = {
     location: location
   }
 }
+module dashboard 'dashboard/dashboard.bicep' = {
+  name: 'dashboard'
+  scope: rg
+  params: {
+    insightsId: insights.outputs.id
+    location: location
+  }
+}
 module insights 'insights/insights.module.bicep' = {
   name: 'insights'
   scope: rg

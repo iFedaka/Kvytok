@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
@@ -51,6 +52,12 @@ public sealed class ApiFixture : IAsyncLifetime
 
     /// <summary>The API's own relay. Its timer runs on <see cref="Clock"/> and so never fires; tests drain it by hand.</summary>
     public OutboxRelay Relay => _factory.Services.GetRequiredService<OutboxRelay>();
+
+    /// <summary>The API's meter factory, so a test sees this API's measurements and no other host's.</summary>
+    public IMeterFactory Meters => _factory.Services.GetRequiredService<IMeterFactory>();
+
+    /// <summary>The API's own services, for what a test must read from the running host rather than assume.</summary>
+    public IServiceProvider Services => _factory.Services;
 
     public async ValueTask InitializeAsync()
     {
