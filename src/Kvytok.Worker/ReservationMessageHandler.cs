@@ -16,7 +16,8 @@ public sealed class ReservationMessageHandler(
     ILogger<ReservationMessageHandler> logger)
 {
     // The app's own source, which ServiceDefaults already traces
-    private static readonly ActivitySource Tracing = new(typeof(ReservationMessageHandler).Assembly.GetName().Name!);
+    public static readonly string SourceName = typeof(ReservationMessageHandler).Assembly.GetName().Name!;
+    private static readonly ActivitySource Tracing = new(SourceName);
 
     /// <exception cref="UnprocessableMessageException">No retry can help this message.</exception>
     public async Task HandleAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken)
