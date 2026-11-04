@@ -211,7 +211,7 @@ public sealed class ReservationLifecycleTests(DatabaseFixture database)
         {
             await Task.Delay(ReservationLifecycle.LockTimeoutMilliseconds + 1000, Ct);
             await held.RollbackAsync(Ct);
-        });
+        }, Ct);
 
         var keyChecks = new KeyChecks();
         await using var db = database.CreateDb(keyChecks);
