@@ -9,8 +9,17 @@ using Scalar.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
-builder.Services.AddOpenApi(o => o.AddSchemaTransformer<DateTimeExampleSchemaTransformer>());
-builder.Services.AddProblemDetails();
+builder.Services.AddOpenApi(o => o
+    .AddSchemaTransformer<DateTimeExampleSchemaTransformer>()
+    .AddOperationTransformer<CorrelationIdOperationTransformer>());
+// Problems written through IProblemDetailsService (validation, binding failures, an unhandled exception's 500)
+// carry the correlation id in the body. Hand-built ones such as ReserveSeat's 409 do not; every response,
+// those included, carries it in the X-Correlation-ID header.
+builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = context =>
+{
+    if (CorrelationIdMiddleware.Get(context.HttpContext) is { } correlationId)
+        context.ProblemDetails.Extensions["correlationId"] = correlationId;
+});
 builder.Services.AddExceptionHandler<BadRequestExceptionHandler>();
 // throw on binding failures in every environment so BadRequestExceptionHandler can describe them
 builder.Services.Configure<RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
@@ -51,16 +60,18 @@ builder.Services.AddEndpoints(typeof(Program).Assembly);
 
 var app = builder.Build();
 
+// Outside the exception handler, so the error it logs for an unhandled exception carries the id
+app.UseMiddleware<CorrelationIdMiddleware>();
+// Exceptions no handler claims become a 500 problem with no exception details in it
 app.UseExceptionHandler();
 
+// Before the redirect: off Development it branches the health-probe port off, which must not be redirected
 app.MapDefaultEndpoints();
 
-// Configure the HTTP request pipeline.
+app.UseHttpsRedirection();
+
 app.MapOpenApi();
 app.MapScalarApiReference();
-
-
-app.UseHttpsRedirection();
 
 app.MapGet("/", () => TypedResults.Ok(new
     {

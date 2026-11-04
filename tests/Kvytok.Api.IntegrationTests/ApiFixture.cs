@@ -13,6 +13,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
 using Testcontainers.MsSql;
 
@@ -50,6 +51,9 @@ public sealed class ApiFixture : IAsyncLifetime
 
     public HttpClient Client { get; private set; } = null!;
 
+    /// <summary>Every log the API writes, shared by all tests: find yours by something only your request carries.</summary>
+    public FakeLogCollector Logs => _factory.Services.GetFakeLogCollector();
+
     /// <summary>The API's own relay. Its timer runs on <see cref="Clock"/> and so never fires; tests drain it by hand.</summary>
     public OutboxRelay Relay => _factory.Services.GetRequiredService<OutboxRelay>();
 
@@ -85,6 +89,8 @@ public sealed class ApiFixture : IAsyncLifetime
             {
                 services.Replace(ServiceDescriptor.Singleton<TimeProvider>(Clock));
                 services.Replace(ServiceDescriptor.Singleton<ServiceBusSender>(ReservationsQueue));
+                services.AddTransient<IEndpoint, ThrowingEndpoint>();
+                services.AddFakeLogging();
             });
         });
 
