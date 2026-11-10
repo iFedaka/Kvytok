@@ -47,9 +47,10 @@ shows what is built and what comes next.
       [One trace across the queue](#one-trace-across-the-queue)
 - [x] Custom metric and dashboard: reservations per minute, the reservation endpoint's latency
       and errors on one Azure dashboard, kept in Bicep; see [The dashboard](#the-dashboard)
+- [x] Event list (`GET /events`) from an in-process HybridCache; Redis considered and declined,
+      see [Caching the event list](#caching-the-event-list)
 
 **Planned, in order**
-- [ ] Redis cache-aside
 - [ ] Seat-grid demo page
 - [ ] C4 diagram, levels 1–2
 - [ ] ADRs for the remaining [Decisions](#decisions), in MADR format (two so far, in
@@ -109,8 +110,8 @@ the same database, so publishing an event and changing state happen in one trans
 message contract and nothing else.
 
 **Operations** — SQL, Service Bus and Application Insights reached through managed
-identities, with no connection secrets to store, Redis for
-cache-aside on the event list, Application Insights with distributed tracing across
+identities, with no connection secrets to store; the event list cached in process
+([Caching the event list](#caching-the-event-list)); Application Insights with distributed tracing across
 the queue boundary ([One trace across the queue](#one-trace-across-the-queue)), health endpoints `/health` and `/alive` on a port the public
 ingress does not route to.
 
@@ -165,6 +166,9 @@ ingress does not route to.
   but logs every harmless duplicate as an error. The cost is a measured ceiling of about 45
   steps a second, because time-ordered ids put every range lock in one place.
   [ADR 0002](docs/adr/0002-message-key-checked-under-a-lock.md)
+- **An in-process cache, not Redis.** The one cached read is the event list, which is not on
+  the path anyone is waiting on. A managed Redis would be the first thing in this architecture that
+  cannot scale to zero. [Caching the event list](#caching-the-event-list)
 - **Container Apps rather than App Service or AKS.** It runs the Api and a
   queue-driven Worker side by side with scale-to-zero, without running a cluster.
 
@@ -342,6 +346,48 @@ The dashboard is Bicep ([dashboard.bicep](src/Kvytok.AppHost/dashboard.bicep)), 
 AppHost as a template, so it is provisioned with everything else and regenerated into `infra/`.
 Each tile defaults to the last four hours.
 
+### Caching the event list
+
+The plan said Redis cache-aside on the event list. What was built is smaller: `GET /events`
+(up to 100 upcoming events, soonest first) through .NET's `HybridCache` with no second layer,
+so each Api replica keeps its own copy in memory for 30 seconds.
+
+**Cached:** the event list, and only what in it is fixed when an event is created: id, name,
+start time, seat count. A stale copy can be missing an event but never wrong about one. Creating
+an event clears the copy on the replica that created it; the other replicas keep theirs until it
+runs out, so a new event can take up to 30 seconds to appear everywhere. An
+[integration test](tests/Kvytok.Api.IntegrationTests/Features/ListEventsTests.cs) pins both
+behaviours: a new event is listed at once, and one written past this replica is not.
+
+**Refused:**
+
+- **Seat status, and the free-seat count** (`GET /events/{eventId}`). It changes on every
+  reservation and every expiry. A stale `Free` sends someone into a `409`; a stale `Held` hides a
+  seat that came back.
+- **The status read in reserve.** It is the one read in the hot path, and the tempting one. Cached,
+  it saves a read under snapshot isolation that takes no lock and waits for none. A stale `Free`
+  would only fall through to the update, harmless and useless; a stale `Held` would turn a buyer
+  away from a seat that is free. The update decides who wins; this read only turns losers away
+  sooner, and only while it is current.
+- **Reservations** (`GET /reservations/{id}`). The worker changes them behind the Api's back, and
+  a client polls one to see `Confirmed`.
+
+What the cache does on its own endpoint: one request a second for 100 seconds made 13 queries in
+all, one per replica per 30 seconds, each about 2 ms. A hit takes 0.3 ms inside the Api. From the
+laptop both take 41 ms at the median, which is the network round trip. Each miss's query appears
+as a trace of its own, not under the request that missed: HybridCache runs the factory on behalf
+of every waiting caller, outside any one request's trace.
+
+**The decision is the part worth keeping.** The second layer is a configuration change away:
+register an `IDistributedCache` (`AddRedisDistributedCache` with a Redis resource in the
+AppHost) and HybridCache uses it with no change to the endpoint. It is not added. The smallest
+managed Redis on Azure is about $11–12 a month and runs all the time, against a measured
+steady state of about $5 a month for this whole deployment (see [Running it](#running-it)). It
+would be the first thing here that cannot scale to zero. What it would buy: one network call to
+Redis in place of a 2 ms query, the replicas sharing one copy, and a warm cache after a cold
+start, for a read that is not on the path anyone is waiting on. Worth revisiting if the event
+list ever becomes the hot path, or if the database becomes the bottleneck, and neither is true now.
+
 ## Running it
 
 Locally, with .NET Aspire orchestrating the dependencies in containers:
@@ -401,6 +447,4 @@ k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
 
 .NET 10 · ASP.NET Core minimal APIs · EF Core · .NET Aspire · Azure SQL · Azure
 Service Bus · Azure Container Apps · Application Insights · KEDA · Bicep · GitHub
-Actions · Testcontainers · k6
-
-Planned: Azure Cache for Redis ([Status](#status)).
+Actions · Testcontainers · k6 · HybridCache (in process)

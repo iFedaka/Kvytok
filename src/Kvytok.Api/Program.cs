@@ -55,6 +55,9 @@ builder.Services.AddOptions<ReservationOptions>()
     .Validate(o => o.HoldFor > TimeSpan.Zero, "Reservation:HoldFor must be a positive duration, e.g. 00:10:00.")
     .ValidateOnStart();
 builder.Services.AddSingleton<ReservationMetrics>();
+// In-process only. With no IDistributedCache registered, HybridCache has no second layer; adding
+// one (builder.AddRedisDistributedCache) is the whole change. See "Caching" in the README.
+builder.Services.AddHybridCache();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpoints(typeof(Program).Assembly);
 

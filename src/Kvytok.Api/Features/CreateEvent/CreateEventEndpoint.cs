@@ -1,5 +1,7 @@
+using Kvytok.Api.Features.ListEvents;
 using Kvytok.Domain;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.Caching.Hybrid;
 
 namespace Kvytok.Api.Features.CreateEvent;
 
@@ -20,6 +22,7 @@ public sealed class CreateEventEndpoint : IEndpoint
         CreateEventRequest request,
         KvytokDbContext db,
         TimeProvider clock,
+        HybridCache cache,
         CancellationToken cancellationToken)
     {
         var errors = Validate(request, clock.GetUtcNow());
@@ -44,6 +47,10 @@ public sealed class CreateEventEndpoint : IEndpoint
 
         // one implicit transaction: the event and all its seats, or nothing
         await db.SaveChangesAsync(cancellationToken);
+
+        // committed, so cleared even if the caller has gone; on this replica only, the others
+        // pick the event up when their copy expires
+        await cache.RemoveAsync(EventListCache.Key, CancellationToken.None);
 
         return TypedResults.Created($"/events/{ev.Id}", new CreateEventResponse(ev.Id));
     }

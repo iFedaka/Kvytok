@@ -10,6 +10,7 @@
     <PackageReference Include="Aspire.Azure.Messaging.ServiceBus" />
     <PackageReference Include="Aspire.Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
     <PackageReference Include="Scalar.AspNetCore" />
   </ItemGroup>
 

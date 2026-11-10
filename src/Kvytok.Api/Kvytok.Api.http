@@ -27,6 +27,9 @@ Content-Type: application/json
   "seatCount": 0
 }
 
+### List upcoming events (cached; the event above is in it at once on this replica)
+GET {{host}}/events
+
 ### Get the event and its seat map
 @eventId = {{createEvent.response.body.$.eventId}}
 GET {{host}}/events/{{eventId}}

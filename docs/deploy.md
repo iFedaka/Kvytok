@@ -231,6 +231,20 @@ Expected: one component, `localAuthDisabled` `True`, with `workspace` pointing t
 the environment's `aspireenvlaw-…` workspace. A second workspace means the sharing in the AppHost
 was lost, and teardown then has twice as many workspaces to purge.
 
+**A `GET /events` with no database call is normal, slow or not.** The event list comes from an
+in-process HybridCache. When it misses, the query that refills it runs on behalf of every request
+waiting for the same entry, outside any one request's trace. So the request that missed shows
+no SQL at all, and the query is a trace of its own, about once per replica every 30 seconds. To
+see those queries next to the slow request:
+
+```kusto
+AppDependencies
+| where TimeGenerated > ago(1h) and DependencyType == "SQL"
+    and Data has "FROM [Events]" and Data !has "WHERE [e].[Id]"   // the list, not GET /events/{id}
+| join kind=leftanti (AppRequests | where TimeGenerated > ago(1h)) on OperationId
+| project TimeGenerated, AppRoleInstance, DurationMs
+```
+
 ## Exercising the relay
 
 The relay only sends what the request's own publish could not, so in normal running it has
