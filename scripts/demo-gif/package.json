@@ -1,0 +1,12 @@
+{
+  "name": "kvytok-demo-gif",
+  "private": true,
+  "description": "Records docs/images/seat-race.gif from the seat-grid demo page",
+  "type": "module",
+  "scripts": {
+    "record": "node record.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.0"
+  }
+}

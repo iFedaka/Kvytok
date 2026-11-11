@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kvytok seat grid</title>
+<!--
+  The one page in the project, there to make contention visible. Everything it does goes through the
+  public API: GET /events/{id} every two seconds for the grid, POST /events/{id}/reservations on a click.
+  Open it in two windows on the same event and book the same seat in both: one gets 201, the other 409.
+-->
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6b6b70;
+    --line: #dcdad4;
+    --free: #ffffff;
+    --free-hover: #eef3ff;
+    --taken: #d93a3a;
+    --taken-text: #ffffff;
+    --mine: #1f8a4c;
+    --mine-text: #ffffff;
+    --accent: #2f5bd3;
+    --warn-bg: #fdecec;
+    --warn-text: #9b1c1c;
+    --ok-bg: #e7f5ec;
+    --ok-text: #14572f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151517;
+      --panel: #1e1e21;
+      --text: #ececee;
+      --muted: #9a9aa2;
+      --line: #34343a;
+      --free: #26262a;
+      --free-hover: #2c3550;
+      --taken: #c93636;
+      --mine: #2a9d5c;
+      --accent: #7c9cf5;
+      --warn-bg: #3a1d1d;
+      --warn-text: #ffb4b4;
+      --ok-bg: #173323;
+      --ok-text: #a8e6bf;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 1.35rem; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline;
+    color: var(--muted); font-size: 0.9rem; margin-bottom: 14px;
+  }
+  .bar strong { color: var(--text); font-variant-numeric: tabular-nums; }
+  .stage {
+    text-align: center; font-size: 0.75rem; letter-spacing: 0.2em; color: var(--muted);
+    border-bottom: 3px solid var(--line); padding-bottom: 4px; margin: 0 12% 16px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 10), minmax(0, 1fr));
+    gap: 6px;
+  }
+  .seat {
+    aspect-ratio: 1;
+    min-width: 0;
+    border-radius: 8px 8px 4px 4px;
+    border: 1px solid var(--line);
+    background: var(--free);
+    color: var(--text);
+    font: inherit; font-size: 0.8rem; font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.25s, border-color 0.25s, transform 0.1s;
+  }
+  .seat:hover:not(:disabled) { background: var(--free-hover); border-color: var(--accent); }
+  .seat:active:not(:disabled) { transform: scale(0.94); }
+  .seat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seat.taken { background: var(--taken); border-color: var(--taken); color: var(--taken-text); cursor: not-allowed; }
+  .seat.mine { background: var(--mine); border-color: var(--mine); color: var(--mine-text); cursor: default; }
+  .seat.pending { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent); }
+  .seat.lost { animation: shake 0.4s; }
+  @keyframes shake {
+    20%, 60% { transform: translateX(-3px); }
+    40%, 80% { transform: translateX(3px); }
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; color: var(--muted); font-size: 0.85rem; }
+  .legend span::before {
+    content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+    margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); background: var(--free);
+  }
+  .legend .l-taken::before { background: var(--taken); border-color: var(--taken); }
+  .legend .l-mine::before { background: var(--mine); border-color: var(--mine); }
+  .message {
+    min-height: 2.9em; margin: 14px 0 0; padding: 8px 12px; border-radius: 8px;
+    display: flex; align-items: center;
+  }
+  .message:empty { visibility: hidden; }
+  .message.warn { background: var(--warn-bg); color: var(--warn-text); }
+  .message.ok { background: var(--ok-bg); color: var(--ok-text); }
+  .message.info { background: var(--bg); color: var(--muted); }
+  .events { list-style: none; padding: 0; margin: 0 0 16px; }
+  .events li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .events a { color: var(--accent); }
+  code { font-size: 0.9em; }
+  footer { margin-top: 16px; color: var(--muted); font-size: 0.85rem; }
+  footer a { color: var(--accent); }
+  @media (max-width: 480px) {
+    .grid { gap: 4px; }
+    .seat { font-size: 0.7rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Kvytok seat grid</h1>
+  <p class="sub" id="subtitle">Loading…</p>
+
+  <section class="panel" id="picker" hidden>
+    <ul class="events" id="events"></ul>
+  </section>
+
+  <section class="panel" id="event" hidden>
+    <div class="bar">
+      <span><strong id="free">–</strong> of <strong id="total">–</strong> seats free</span>
+      <span>booking as <strong id="who"></strong></span>
+      <span id="updated">not yet updated</span>
+    </div>
+    <div class="stage">STAGE</div>
+    <div class="grid" id="grid" role="grid" aria-label="Seats"></div>
+    <div class="legend">
+      <span>free, click to book</span>
+      <span class="l-taken">taken</span>
+      <span class="l-mine">held by you</span>
+    </div>
+    <p class="message" id="message" role="status" aria-live="polite"></p>
+  </section>
+
+  <footer>
+    Each click is one <code>POST /events/{id}/reservations</code>; the grid re-reads
+    <code>GET /events/{id}</code> every two seconds. Open this page in a second window and try
+    for the same seat. <a href="../scalar">API reference</a>
+  </footer>
+</main>
+
+<script>
+"use strict";
+
+const POLL_MS = 2000;
+// relative to this page, so it works wherever the Api is mounted
+const api = new URL("../", location.href);
+
+const params = new URLSearchParams(location.search);
+const eventId = params.get("event");
+// The API wants a holder email; no mail goes to it. ?as= picks the name, e.g. to label two windows.
+const holder = (params.get("as") || `visitor-${Math.random().toString(36).slice(2, 6)}`).trim();
+const email = holder.includes("@") ? holder : `${holder.toLowerCase().replace(/[^a-z0-9.-]/g, "")}@example.com`;
+
+const $ = id => document.getElementById(id);
+const mine = new Map();        // seat number -> expiresAt, for seats this window won
+const pending = new Set();     // seat numbers with a request in flight
+let seats = [];
+let pollTimer = 0;
+let gone = false;              // the event does not exist: nothing to poll
+
+function say(text, kind) {
+  const el = $("message");
+  el.textContent = text;
+  el.className = `message ${kind || ""}`;
+}
+
+function time(value) {
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+async function call(path, init) {
+  return fetch(new URL(path, api), {
+    ...init,
+    headers: { "Accept": "application/json", "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+}
+
+// ---- no event chosen: list upcoming ones ----
+// Read-only on purpose: creating an event is left to the API reference, so the page offers no
+// button that writes to the database (see "The seat grid only books" in the README's Decisions).
+
+async function showPicker() {
+  $("subtitle").textContent = "Pick an event.";
+  $("picker").hidden = false;
+  const list = $("events");
+  try {
+    const response = await call("events");
+    const body = await response.json();
+    for (const ev of body.events.slice(0, 10)) {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = `?event=${ev.eventId}`;
+      a.textContent = ev.name;
+      li.append(a, ` · ${ev.seatCount} seats · ${new Date(ev.startsAt).toLocaleDateString()}`);
+      list.append(li);
+    }
+    if (body.events.length === 0)
+      list.innerHTML = '<li>No upcoming events. Create one, then come back.</li>';
+  } catch {
+    list.innerHTML = "<li>Could not reach the API.</li>";
+  }
+}
+
+// ---- an event: the grid ----
+
+function render() {
+  const grid = $("grid");
+  grid.style.setProperty("--cols", seats.length > 60 ? 12 : seats.length > 20 ? 10 : Math.min(seats.length, 8));
+
+  // built once, then updated in place so a re-read never steals focus or restarts an animation
+  if (grid.children.length !== seats.length) {
+    grid.replaceChildren(...seats.map(s => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "seat";
+      b.textContent = s.number;
+      b.dataset.seat = s.number;
+      b.addEventListener("click", () => reserve(s.number));
+      return b;
+    }));
+  }
+
+  seats.forEach((s, i) => {
+    const b = grid.children[i];
+    const isMine = mine.has(s.number) && s.status !== "Free";
+    const isTaken = s.status !== "Free" && !isMine;
+    b.classList.toggle("mine", isMine);
+    b.classList.toggle("taken", isTaken);
+    b.classList.toggle("pending", pending.has(s.number));
+    b.disabled = s.status !== "Free" || pending.has(s.number);
+    const label = isMine ? `Seat ${s.number}: held by you until ${time(mine.get(s.number))}`
+      : isTaken ? `Seat ${s.number}: ${s.status === "Booked" ? "booked" : "held"}`
+      : `Seat ${s.number}: free`;
+    b.setAttribute("title", label);
+    b.setAttribute("aria-label", label);
+  });
+}
+
+async function refresh() {
+  clearTimeout(pollTimer);
+  try {
+    const response = await call(`events/${eventId}`);
+    if (response.status === 404) {
+      $("subtitle").textContent = "No such event.";
+      $("event").hidden = true;
+      gone = true;
+      return;  // nothing to poll for
+    }
+    if (!response.ok) throw new Error(response.status);
+    const ev = await response.json();
+
+    $("title").textContent = ev.name;
+    $("subtitle").textContent = `${new Date(ev.startsAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+    $("free").textContent = ev.freeSeatCount;
+    $("total").textContent = ev.seatCount;
+    seats = ev.seats;
+
+    // A hold that ran out comes back Free: it is no longer this window's
+    for (const s of seats)
+      if (s.status === "Free") mine.delete(s.number);
+
+    $("event").hidden = false;
+    $("updated").textContent = `updated ${time(Date.now())}`;
+    render();
+  } catch {
+    $("updated").textContent = "could not reach the API, retrying";
+  }
+  // Each read is an uncached query on a database with a monthly allowance, so a tab nobody is
+  // looking at stops asking; it reads again the moment it is shown
+  if (!document.hidden)
+    pollTimer = setTimeout(refresh, POLL_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) clearTimeout(pollTimer);
+  else if (eventId && !gone) refresh();
+});
+
+async function reserve(number) {
+  if (pending.has(number)) return;
+  pending.add(number);
+  render();
+  say(`Booking seat ${number}…`, "info");
+
+  try {
+    const response = await call(`events/${eventId}/reservations`, {
+      method: "POST",
+      body: JSON.stringify({ seatNumber: number, holderEmail: email }),
+    });
+    if (response.status === 201) {
+      const { expiresAt } = await response.json();
+      mine.set(number, expiresAt);
+      say(`Seat ${number} is yours, held until ${time(expiresAt)} unless paid.`, "ok");
+    } else if (response.status === 409) {
+      say(`Seat ${number}: that seat has just been taken.`, "warn");
+      const b = $("grid").querySelector(`[data-seat="${number}"]`);
+      b?.classList.remove("lost");
+      void b?.offsetWidth;  // restart the animation
+      b?.classList.add("lost");
+      // shown taken now, without waiting for the next read
+      const seat = seats.find(s => s.number === number);
+      if (seat) seat.status = "Held";
+    } else {
+      say(`Seat ${number}: the API answered ${response.status}. Try again.`, "warn");
+    }
+  } catch {
+    say(`Seat ${number}: could not reach the API. Try again.`, "warn");
+  } finally {
+    pending.delete(number);
+    render();
+  }
+  refresh();
+}
+
+$("who").textContent = holder;
+if (eventId) refresh(); else showPicker();
+</script>
+</body>
+</html>

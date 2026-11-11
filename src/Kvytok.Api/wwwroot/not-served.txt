@@ -1,0 +1,2 @@
+A decoy. The Api serves static files from wwwroot/demo only, so this file must answer 404.
+DemoPageTests requests it: if UseStaticFiles() is ever widened to all of wwwroot, that test fails.

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
 using Kvytok.Api.Features.ReserveSeat;
 using Kvytok.Domain;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
 
@@ -73,6 +74,13 @@ app.MapDefaultEndpoints();
 
 app.UseHttpsRedirection();
 
+// The seat-grid demo, wwwroot/demo/index.html: /demo redirects to /demo/, which serves it. It calls
+// the public endpoints and nothing else, so it needs no route or service of its own. Rooted at
+// wwwroot/demo, not wwwroot: a file put anywhere else in wwwroot is not served.
+var demoFiles = new PhysicalFileProvider(Path.Combine(app.Environment.WebRootPath, "demo"));
+app.UseDefaultFiles(new DefaultFilesOptions { RequestPath = "/demo", FileProvider = demoFiles });
+app.UseStaticFiles(new StaticFileOptions { RequestPath = "/demo", FileProvider = demoFiles });
+
 app.MapOpenApi();
 app.MapScalarApiReference();
 
@@ -82,6 +90,7 @@ app.MapGet("/", () => TypedResults.Ok(new
         version = Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
         docs = "/scalar",
+        demo = "/demo/",
         openapi = "/openapi/v1.json",
     }))
    .ExcludeFromDescription();

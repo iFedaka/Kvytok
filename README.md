@@ -4,7 +4,7 @@ Seat reservation for events with a fixed number of seats. A study in what happen
 when hundreds of requests compete for the same seat, and in how such a service is
 operated on Azure.
 
-**Live API:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/ · **API reference:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/scalar · [![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
+**Live API:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/ · **API reference:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/scalar · **Seat grid:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/demo/ · [![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
 
 > A portfolio project, not a product. It exists to demonstrate concurrency control,
 > asynchronous processing and cloud operations end to end, on a domain small enough
@@ -49,9 +49,11 @@ shows what is built and what comes next.
       and errors on one Azure dashboard, kept in Bicep; see [The dashboard](#the-dashboard)
 - [x] Event list (`GET /events`) from an in-process HybridCache; Redis considered and declined,
       see [Caching the event list](#caching-the-event-list)
+- [x] Seat-grid demo page (`/demo/`): free seats clickable, taken ones red, a `409` shown as
+      "that seat has just been taken", the grid re-read every two seconds; see
+      [Two windows, one seat](#two-windows-one-seat)
 
 **Planned, in order**
-- [ ] Seat-grid demo page
 - [ ] C4 diagram, levels 1–2
 - [ ] ADRs for the remaining [Decisions](#decisions), in MADR format (two so far, in
       [docs/adr](docs/adr))
@@ -153,6 +155,12 @@ ingress does not route to.
   to ask for. The data is test data, and the endpoint can only report a payment; the
   worker decides what it means. A real provider would sign its calls and the endpoint
   would verify the signature.
+- **The seat grid only books.** `POST /events` is as open as the webhook, and the
+  [seat grid](#two-windows-one-seat) could have offered it as a button. It does not: each click
+  would write an event and its seats into a free-offer database that pauses for the rest of the
+  month once its allowance is spent, and nothing rate-limits the endpoint. Making an event stays on
+  the API reference page; the grid lists upcoming events and books seats in one. Its two-second
+  re-read is an uncached query too, so a hidden tab stops polling and reads again when shown.
 - **The outbox relay runs inside the Api, not the Worker or a scheduled job.** An unpublished
   row does harm only while someone wants that seat, and that person's request wakes the Api,
   whose timer drains the outbox. Replicas claim disjoint batches under a lease, and startup
@@ -256,7 +264,16 @@ What the numbers say:
   the database, which the [runbook](docs/deploy.md) already names as the first thing to drop.
   Neither is applied or measured yet. The load test waits the cold start out before measuring.
 
-TODO: 10-second GIF — two browser windows booking the same seat, one wins.
+### Two windows, one seat
+
+![Two browser windows on the seat-grid page click seat 14 at the same instant: one turns green and holds it, the other shows "that seat has just been taken"](docs/images/seat-race.gif)
+
+Two windows on the [seat grid](src/Kvytok.Api/wwwroot/demo/index.html) click seat 14 at the same
+instant: two real `POST`s, sent together. The database decides. Here anna holds the seat and ben
+gets the `409`; which window wins changes from run to run. Midway, a third client books seats 4
+and 30, and both grids show them on their next two-second read. Then ben takes seat 15.
+Recorded against a local Api by [scripts/demo-gif](scripts/demo-gif/record.mjs), which creates
+a fresh event and drives both windows through Playwright.
 
 ### One trace across the queue
 
@@ -396,7 +413,8 @@ Locally, with .NET Aspire orchestrating the dependencies in containers:
 dotnet run --project src/Kvytok.AppHost
 ```
 
-The Aspire dashboard lists every resource and its traces. Only SQL Server runs in a
+The Aspire dashboard lists every resource and its traces, and the seat grid is at `/demo/` on
+the Api. Only SQL Server runs in a
 container. Service Bus, Application Insights and [the dashboard](#the-dashboard) have no
 local stand-in here, so Aspire provisions them in a resource group of their own in your
 subscription, and this path needs `az login` and the subscription in the AppHost's
