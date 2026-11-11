@@ -317,6 +317,18 @@ overlaps with provisioning, and did not reappear once provision and deploy ran a
 separate steps. Treat it as transient; this is why the two commands are split at
 the top of this document.
 
+**`CONTAINER1013` on a push, with `Access to the path is denied.`** The registry
+is named, but this is not the registry refusing anything — an ACR refusal is
+`CONTAINER1005` with a status code. It is a local file-access error from the
+SDK's container tooling, which writes the layer tarballs to a temporary file
+under `%TEMP%` before uploading them. azd has already logged in by this point,
+and the image itself was built: the failing run printed its manifest. Seen once
+during `azd deploy`; re-running `azd deploy api` succeeded, and the skipped
+`worker` and `migrator` did not need it because their images were already
+current. Retry the one service rather than the set. If it repeats, clear stale
+`%TEMP%\azd-*` directories and rule out antivirus holding the freshly written
+layers; there is nothing to change in Azure.
+
 **`DotNetComponentOperationError: aspire-dashboard`.** The managed Aspire
 dashboard failing to provision. It is not deployed here, and the dashboard URL
 azd prints is a reserved address that serves nothing. Harmless.
