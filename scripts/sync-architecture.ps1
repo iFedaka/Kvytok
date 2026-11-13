@@ -27,10 +27,17 @@ $views = [ordered]@{
 
 function Read-Text($path) { [IO.File]::ReadAllText($path) }
 
+# The images run as their own non-root user. Where Docker enforces file ownership (Linux, so the CI
+# runner) it can only write into a mounted directory that everyone may write to.
+function New-MountedDirectory($path) {
+    New-Item -ItemType Directory -Force $path | Out-Null
+    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($path, [IO.UnixFileMode]0b111111111) }
+}
+
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) "kvytok-c4-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Force $tempDir | Out-Null
 $exportDir = Join-Path $tempDir "export"
-New-Item -ItemType Directory -Force $exportDir | Out-Null
+New-MountedDirectory $exportDir
 
 try {
     docker run --rm -v "${architectureDir}:/usr/local/structurizr:ro" -v "${exportDir}:/out" $structurizr `
@@ -89,7 +96,7 @@ try {
     }
     if ($rerender) {
         $renderDir = Join-Path $tempDir "render"
-        New-Item -ItemType Directory -Force $renderDir | Out-Null
+        New-MountedDirectory $renderDir
         foreach ($view in $rerender) { Copy-Item (Join-Path $pumlDir "structurizr-$view.puml") $renderDir }
         docker run --rm -v "${renderDir}:/data" $plantuml -tpng -DPLANTUML_LIMIT_SIZE=8192 /data | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "plantuml failed with exit code $LASTEXITCODE" }
