@@ -38,6 +38,8 @@ $tempDir = Join-Path ([IO.Path]::GetTempPath()) "kvytok-c4-$([guid]::NewGuid().T
 New-Item -ItemType Directory -Force $tempDir | Out-Null
 $exportDir = Join-Path $tempDir "export"
 New-MountedDirectory $exportDir
+$processedDir = Join-Path $tempDir "processed"
+New-Item -ItemType Directory -Force $processedDir | Out-Null
 
 try {
     docker run --rm -v "${architectureDir}:/usr/local/structurizr:ro" -v "${exportDir}:/out" $structurizr `
@@ -62,7 +64,8 @@ try {
             $puml = $puml -replace 'System\(Paymentprovider,', 'System_Ext(Paymentprovider,'
         }
         $puml = $puml -replace 'SHOW_LEGEND\([^)]*\)\n?', ''
-        [IO.File]::WriteAllText($src, $puml, [Text.UTF8Encoding]::new($false))
+        # Into a directory of our own: the export's files belong to the container's user
+        [IO.File]::WriteAllText((Join-Path $processedDir $name), $puml, [Text.UTF8Encoding]::new($false))
 
         $committed = Join-Path $pumlDir $name
         $png       = Join-Path $imagesDir $v.Png
@@ -92,7 +95,7 @@ try {
 
     New-Item -ItemType Directory -Force $pumlDir, $imagesDir | Out-Null
     foreach ($view in $views.Keys) {
-        Copy-Item (Join-Path $exportDir "structurizr-$view.puml") $pumlDir -Force
+        Copy-Item (Join-Path $processedDir "structurizr-$view.puml") $pumlDir -Force
     }
     if ($rerender) {
         $renderDir = Join-Path $tempDir "render"
