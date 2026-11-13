@@ -1,0 +1,27 @@
+@startuml
+title <size:24>System Context View: Kvytok</size>
+
+set separator none
+top to bottom direction
+
+<style>
+  root {
+    BackgroundColor: #ffffff
+    FontColor: #444444
+  }
+</style>
+
+!include <C4/C4>
+!include <C4/C4_Context>
+
+Person(Buyer, "Buyer", $descr="Books a seat, from the seat-grid page or straight against the API.", $tags="", $link="")
+Person(Organiser, "Organiser", $descr="Creates events and their seats.", $tags="", $link="")
+System_Ext(Paymentprovider, "Payment provider", $descr="Confirms payments by calling a webhook; retries on failure, and may deliver twice.", $tags="", $link="")
+System(Kvytok, "Kvytok", $descr="Reserves seats so that exactly one booking wins a contested seat, and confirms or expires them asynchronously.", $tags="", $link="")
+
+Rel(Buyer, Kvytok, "Reserves seats, reads events and reservations", $techn="HTTPS/JSON", $tags="", $link="")
+Rel(Organiser, Kvytok, "Creates events", $techn="HTTPS/JSON", $tags="", $link="")
+Rel(Paymentprovider, Kvytok, "Reports payments", $techn="HTTPS webhook", $tags="", $link="")
+
+hide stereotypes
+@enduml

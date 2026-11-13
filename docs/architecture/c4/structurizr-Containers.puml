@@ -1,0 +1,44 @@
+@startuml
+title <size:24>Container View: Kvytok</size>
+
+set separator none
+top to bottom direction
+
+<style>
+  root {
+    BackgroundColor: #ffffff
+    FontColor: #444444
+  }
+</style>
+
+!include <C4/C4>
+!include <C4/C4_Context>
+!include <C4/C4_Container>
+
+Person(Buyer, "Buyer", $descr="Books a seat, from the seat-grid page or straight against the API.", $tags="", $link="")
+Person(Organiser, "Organiser", $descr="Creates events and their seats.", $tags="", $link="")
+System_Ext(Paymentprovider, "Payment provider", $descr="Confirms payments by calling a webhook; retries on failure, and may deliver twice.", $tags="", $link="")
+
+System_Boundary("Kvytok_boundary", "Kvytok", $tags="") {
+  Container(Kvytok.ApplicationInsights, "Application Insights", $techn="Azure Monitor", $descr="Traces, metrics and logs; one trace from the Api across the queue to the Worker.", $tags="", $link="")
+  Container(Kvytok.Api, "Api", $techn="ASP.NET Core minimal APIs, Azure Container Apps", $descr="Events, seat reservations, payment webhook, seat-grid demo page, OpenAPI reference. Relays outbox messages the in-process send missed.", $tags="", $link="")
+  Container(Kvytok.Worker, "Worker", $techn=".NET BackgroundService, Azure Container Apps", $descr="Confirms paid reservations, expires unpaid ones, retries failed steps with backoff. Scales on queue length.", $tags="", $link="")
+  Container(Kvytok.Migrator, "Migrator", $techn=".NET, Container Apps job", $descr="Applies EF Core migrations and narrows the Api's and Worker's database roles to reading and writing rows. Run after each deploy.", $tags="", $link="")
+  ContainerDb(Kvytok.Database, "Database", $techn="Azure SQL (serverless)", $descr="Events, seats, reservations, transactional outbox, processed message ids.", $tags="", $link="")
+  ContainerQueue(Kvytok.Reservationsqueue, "Reservations queue", $techn="Azure Service Bus", $descr="Reservation created, payment received, expiry due (scheduled); dead-letter queue after five attempts.", $tags="", $link="")
+}
+
+Rel(Buyer, Kvytok.Api, "Reserves seats, reads events and reservations", $techn="HTTPS/JSON", $tags="", $link="")
+Rel(Organiser, Kvytok.Api, "Creates events", $techn="HTTPS/JSON", $tags="", $link="")
+Rel(Paymentprovider, Kvytok.Api, "Reports payments", $techn="HTTPS webhook", $tags="", $link="")
+Rel(Kvytok.Api, Kvytok.Database, "Reads and writes events, seats, reservations and outbox, in one transaction", $techn="EF Core, Entra ID", $tags="", $link="")
+Rel(Kvytok.Api, Kvytok.Reservationsqueue, "Publishes reservation created and expiry due; payment received", $techn="AMQP, Entra ID", $tags="", $link="")
+Rel(Kvytok.Reservationsqueue, Kvytok.Worker, "Delivers messages", $techn="AMQP, Entra ID", $tags="", $link="")
+Rel(Kvytok.Worker, Kvytok.Database, "Confirms or expires reservations, records processed messages", $techn="EF Core, Entra ID", $tags="", $link="")
+Rel(Kvytok.Migrator, Kvytok.Database, "Migrates schema, narrows roles", $techn="EF Core", $tags="", $link="")
+Rel(Kvytok.Api, Kvytok.ApplicationInsights, "Sends telemetry", $techn="OpenTelemetry", $tags="", $link="")
+Rel(Kvytok.Worker, Kvytok.ApplicationInsights, "Sends telemetry", $techn="OpenTelemetry", $tags="", $link="")
+Rel(Kvytok.Migrator, Kvytok.ApplicationInsights, "Sends telemetry", $techn="OpenTelemetry", $tags="", $link="")
+
+hide stereotypes
+@enduml

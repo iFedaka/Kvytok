@@ -52,8 +52,8 @@ shows what is built and what comes next.
 - [x] Seat-grid demo page (`/demo/`): free seats clickable, taken ones red, a `409` shown as
       "that seat has just been taken", the grid re-read every two seconds; see
       [Two windows, one seat](#two-windows-one-seat)
-- [x] C4 system context and container diagrams, modelled in Structurizr DSL and exported to
-      Mermaid; see [How it works](#how-it-works)
+- [x] C4 system context and container diagrams, modelled in Structurizr DSL and rendered
+      to PNG; see [How it works](#how-it-works)
 
 **Planned, in order**
 - [ ] ADRs for the remaining [Decisions](#decisions), in MADR format (two so far, in
@@ -83,85 +83,20 @@ This is the target design; see [Status](#status) for what's built.
 **System context** — who uses Kvytok and what it talks to.
 
 <!-- c4:context:start -->
-```mermaid
-graph TB
-  linkStyle default fill:#ffffff
-
-  subgraph diagram ["System Context View: Kvytok"]
-    style diagram fill:#ffffff,stroke:#ffffff
-
-    1["<div style='font-weight: bold'>Buyer</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Books a seat, from the<br />seat-grid page or straight<br />against the API.</div>"]
-    style 1 fill:#08427b,stroke:#052e56,color:#ffffff
-    2["<div style='font-weight: bold'>Organiser</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Creates events and their<br />seats.</div>"]
-    style 2 fill:#08427b,stroke:#052e56,color:#ffffff
-    3["<div style='font-weight: bold'>Payment provider</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Confirms payments by calling<br />a webhook; retries on<br />failure, and may deliver<br />twice.</div>"]
-    style 3 fill:#999999,stroke:#6b6b6b,color:#ffffff
-    4["<div style='font-weight: bold'>Kvytok</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Reserves seats so that<br />exactly one booking wins a<br />contested seat, and confirms<br />or expires them<br />asynchronously.</div>"]
-    style 4 fill:#1168bd,stroke:#0b4884,color:#ffffff
-
-    1-. "<div>Reserves seats, reads events<br />and reservations</div><div style='font-size: 70%'>[HTTPS/JSON]</div>" .->4
-    2-. "<div>Creates events</div><div style='font-size: 70%'>[HTTPS/JSON]</div>" .->4
-    3-. "<div>Reports payments</div><div style='font-size: 70%'>[HTTPS webhook]</div>" .->4
-
-  end
-```
+![C4 system context: the buyer, the organiser and the payment provider around Kvytok](docs/images/c4-system-context.png)
 <!-- c4:context:end -->
 
 **Containers** — what runs inside it. The Api and the Worker never call each other; they meet
 at the queue and the database.
 
 <!-- c4:containers:start -->
-```mermaid
-graph TB
-  linkStyle default fill:#ffffff
-
-  subgraph diagram ["Container View: Kvytok"]
-    style diagram fill:#ffffff,stroke:#ffffff
-
-    1["<div style='font-weight: bold'>Buyer</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Books a seat, from the<br />seat-grid page or straight<br />against the API.</div>"]
-    style 1 fill:#08427b,stroke:#052e56,color:#ffffff
-    2["<div style='font-weight: bold'>Organiser</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Creates events and their<br />seats.</div>"]
-    style 2 fill:#08427b,stroke:#052e56,color:#ffffff
-    3["<div style='font-weight: bold'>Payment provider</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Confirms payments by calling<br />a webhook; retries on<br />failure, and may deliver<br />twice.</div>"]
-    style 3 fill:#999999,stroke:#6b6b6b,color:#ffffff
-
-    subgraph 4 ["Kvytok"]
-      style 4 fill:#ffffff,stroke:#0b4884,color:#0b4884
-
-      10["<div style='font-weight: bold'>Application Insights</div><div style='font-size: 70%; margin-top: 0px'>[Container: Azure Monitor]</div><div style='font-size: 80%; margin-top:10px'>Traces, metrics and logs; one<br />trace from the Api across the<br />queue to the Worker.</div>"]
-      style 10 fill:#438dd5,stroke:#2e6295,color:#ffffff
-      5["<div style='font-weight: bold'>Api</div><div style='font-size: 70%; margin-top: 0px'>[Container: ASP.NET Core minimal APIs, Azure Container Apps]</div><div style='font-size: 80%; margin-top:10px'>Events, seat reservations,<br />payment webhook, seat-grid<br />demo page, OpenAPI reference.<br />Relays outbox messages the<br />in-process send missed.</div>"]
-      style 5 fill:#438dd5,stroke:#2e6295,color:#ffffff
-      6["<div style='font-weight: bold'>Worker</div><div style='font-size: 70%; margin-top: 0px'>[Container: .NET BackgroundService, Azure Container Apps]</div><div style='font-size: 80%; margin-top:10px'>Confirms paid reservations,<br />expires unpaid ones, retries<br />failed steps with backoff.<br />Scales on queue length.</div>"]
-      style 6 fill:#438dd5,stroke:#2e6295,color:#ffffff
-      7["<div style='font-weight: bold'>Migrator</div><div style='font-size: 70%; margin-top: 0px'>[Container: .NET, Container Apps job]</div><div style='font-size: 80%; margin-top:10px'>Applies EF Core migrations<br />and narrows the Api's and<br />Worker's database roles to<br />reading and writing rows. Run<br />after each deploy.</div>"]
-      style 7 fill:#438dd5,stroke:#2e6295,color:#ffffff
-      8[("<div style='font-weight: bold'>Database</div><div style='font-size: 70%; margin-top: 0px'>[Container: Azure SQL (serverless)]</div><div style='font-size: 80%; margin-top:10px'>Events, seats, reservations,<br />transactional outbox,<br />processed message ids.</div>")]
-      style 8 fill:#438dd5,stroke:#2e6295,color:#ffffff
-      9["<div style='font-weight: bold'>Reservations queue</div><div style='font-size: 70%; margin-top: 0px'>[Container: Azure Service Bus]</div><div style='font-size: 80%; margin-top:10px'>Reservation created, payment<br />received, expiry due<br />(scheduled); dead-letter<br />queue after five attempts.</div>"]
-      style 9 fill:#438dd5,stroke:#2e6295,color:#ffffff
-    end
-
-    1-. "<div>Reserves seats, reads events<br />and reservations</div><div style='font-size: 70%'>[HTTPS/JSON]</div>" .->5
-    2-. "<div>Creates events</div><div style='font-size: 70%'>[HTTPS/JSON]</div>" .->5
-    3-. "<div>Reports payments</div><div style='font-size: 70%'>[HTTPS webhook]</div>" .->5
-    5-. "<div>Reads and writes events,<br />seats, reservations and<br />outbox, in one transaction</div><div style='font-size: 70%'>[EF Core, Entra ID]</div>" .->8
-    5-. "<div>Publishes reservation created<br />and expiry due; payment<br />received</div><div style='font-size: 70%'>[AMQP, Entra ID]</div>" .->9
-    9-. "<div>Delivers messages</div><div style='font-size: 70%'>[AMQP, Entra ID]</div>" .->6
-    6-. "<div>Confirms or expires<br />reservations, records<br />processed messages</div><div style='font-size: 70%'>[EF Core, Entra ID]</div>" .->8
-    7-. "<div>Migrates schema, narrows<br />roles</div><div style='font-size: 70%'>[EF Core]</div>" .->8
-    5-. "<div>Sends telemetry</div><div style='font-size: 70%'>[OpenTelemetry]</div>" .->10
-    6-. "<div>Sends telemetry</div><div style='font-size: 70%'>[OpenTelemetry]</div>" .->10
-    7-. "<div>Sends telemetry</div><div style='font-size: 70%'>[OpenTelemetry]</div>" .->10
-
-  end
-```
+![C4 containers: the Api, the Worker and the Migrator with the database, the queue and Application Insights](docs/images/c4-containers.png)
 <!-- c4:containers:end -->
 
-The model is [workspace.dsl](docs/architecture/workspace.dsl), in Structurizr DSL; the Mermaid above is
-exported from it, not hand-edited: after changing the DSL, run `./scripts/sync-architecture.ps1`
-(needs Docker), which refreshes the diagrams above and `docs/architecture/mermaid/`. CI fails if they
-are out of date.
+The model is [workspace.dsl](docs/architecture/workspace.dsl), in Structurizr DSL; the images above are
+generated from it, not hand-edited: after changing the DSL, run `./scripts/sync-architecture.ps1`
+(needs Docker), which re-exports the C4-PlantUML sources in `docs/architecture/c4/`, renders
+`docs/images/c4-*.png` and updates this page. CI fails if the sources are out of date.
 
 **Api** — ASP.NET Core minimal APIs, organised as vertical slices: one folder per
 use case, each holding its endpoint, handler and data access. A contested seat is
