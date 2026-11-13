@@ -1,0 +1,20 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["System Context View: Kvytok"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    1["<div style='font-weight: bold'>Buyer</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Books a seat, from the<br />seat-grid page or straight<br />against the API.</div>"]
+    style 1 fill:#08427b,stroke:#052e56,color:#ffffff
+    2["<div style='font-weight: bold'>Organiser</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Creates events and their<br />seats.</div>"]
+    style 2 fill:#08427b,stroke:#052e56,color:#ffffff
+    3["<div style='font-weight: bold'>Payment provider</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Confirms payments by calling<br />a webhook; retries on<br />failure, and may deliver<br />twice.</div>"]
+    style 3 fill:#999999,stroke:#6b6b6b,color:#ffffff
+    4["<div style='font-weight: bold'>Kvytok</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Reserves seats so that<br />exactly one booking wins a<br />contested seat, and confirms<br />or expires them<br />asynchronously.</div>"]
+    style 4 fill:#1168bd,stroke:#0b4884,color:#ffffff
+
+    1-. "<div>Reserves seats, reads events<br />and reservations</div><div style='font-size: 70%'>[HTTPS/JSON]</div>" .->4
+    2-. "<div>Creates events</div><div style='font-size: 70%'>[HTTPS/JSON]</div>" .->4
+    3-. "<div>Reports payments</div><div style='font-size: 70%'>[HTTPS webhook]</div>" .->4
+
+  end

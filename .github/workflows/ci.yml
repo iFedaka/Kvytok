@@ -37,3 +37,6 @@ jobs:
       # Integration tests start SQL Server via Testcontainers; ubuntu runners ship with Docker
       - name: Test
         run: dotnet test --solution Kvytok.slnx --configuration Release --no-build
+
+      - name: Architecture diagrams are up to date
+        run: pwsh ./scripts/sync-architecture.ps1 -Check
