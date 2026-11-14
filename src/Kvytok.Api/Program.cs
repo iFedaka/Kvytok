@@ -57,7 +57,7 @@ builder.Services.AddOptions<ReservationOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<ReservationMetrics>();
 // In-process only. With no IDistributedCache registered, HybridCache has no second layer; adding
-// one (builder.AddRedisDistributedCache) is the whole change. See "Caching" in the README.
+// one (builder.AddRedisDistributedCache) is the whole change. See "Caching the event list" in docs/decisions.md.
 builder.Services.AddHybridCache();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpoints(typeof(Program).Assembly);

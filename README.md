@@ -1,485 +1,119 @@
 # Kvytok
 
-Seat reservation for events with a fixed number of seats. A study in what happens
-when hundreds of requests compete for the same seat, and in how such a service is
-operated on Azure.
+[![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
 
-**Live API:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/ · **API reference:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/scalar · **Seat grid:** https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/demo/ · [![CI](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFedaka/Kvytok/actions/workflows/ci.yml?query=branch%3Amain)
+Seat reservation for events with a fixed number of seats. A study in what happens when
+hundreds of requests compete for the same seat, and in how such a service is operated on
+Azure. A portfolio project, not a product.
 
-> A portfolio project, not a product. It exists to demonstrate concurrency control,
-> asynchronous processing and cloud operations end to end, on a domain small enough
-> to read in one sitting.
+**Try it:** [seat grid](https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/demo/) ·
+[API reference](https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/scalar) ·
+[live API](https://api.agreeablebay-afb9f153.swedencentral.azurecontainerapps.io/).
+It scales to zero, so the first request after idle can take over a minute.
 
-## Status
+## Why
 
-Work in progress. [How it works](#how-it-works) describes the target design; this list
-shows what is built and what comes next.
+An event has 200 seats. Hundreds of people press "book" on the same seat in the same
+second. An unpaid reservation expires after 10 minutes and the seat goes back to the pool.
+Payment confirmations arrive asynchronously, out of order, and sometimes twice. Three things
+must hold:
 
-**Done**
-- [x] Aspire AppHost: Api, Worker and SQL Server (container locally)
-- [x] Domain model: events, seats, reservations; EF Core migrations; one active
-      reservation per seat enforced by a filtered unique index; `rowversion` on reservations
-- [x] Slices: create event, get event, reserve seat (conditional update → `409`), get reservation
-- [x] OpenAPI with a Scalar reference page
-- [x] Integration tests against a real SQL Server (Testcontainers)
-- [x] GitHub Actions: build and tests, CI badge in this README
-- [x] Deployed to Azure Container Apps with `azd`; see the [deployment runbook](docs/deploy.md)
-- [x] Migrations as a separate Container Apps job, run by azd after each deploy
-- [x] Least-privilege database roles: the migrator narrows the Api and Worker from Aspire's
-      `db_owner` to reading and writing rows; see [Database roles](docs/deploy.md#database-roles)
-- [x] Health checks on a separate port behind a key, used by the platform's liveness and readiness probes
-- [x] Infrastructure as code in the repository (Bicep generated from the AppHost)
-- [x] Service Bus through Aspire; reserving a seat publishes "reservation created" and
-      schedules the reservation's expiry
-- [x] Payment webhook (`POST /reservations/{id}/payments`) that publishes, never writes
-- [x] Worker: confirms paid reservations, expires unpaid ones; the race between them is
-      decided by `rowversion`; wakes on queue length (KEDA)
-- [x] Transactional outbox with EF Core: written in the reservation's transaction by a
-      `SaveChangesInterceptor`, published in-process right after the commit
-- [x] Outbox relay in the Api: a timer drains what the in-process send failed to publish,
-      each replica claiming a disjoint batch
-- [x] Idempotent consumer: each step recorded under its message id in the step's own transaction;
-      retry with exponential backoff, dead-letter queue after five attempts
-- [x] Load test with k6: up to 800 parallel requests for one seat against the deployed
-      environment; numbers in [Results](#results)
-- [x] Application Insights through Aspire: one trace from the Api across Service Bus to the
-      Worker, and messages the outbox relay sends late kept in the trace that owed them; see
-      [One trace across the queue](#one-trace-across-the-queue)
-- [x] Custom metric and dashboard: reservations per minute, the reservation endpoint's latency
-      and errors on one Azure dashboard, kept in Bicep; see [The dashboard](#the-dashboard)
-- [x] Event list (`GET /events`) from an in-process HybridCache; Redis considered and declined,
-      see [Caching the event list](#caching-the-event-list)
-- [x] Seat-grid demo page (`/demo/`): free seats clickable, taken ones red, a `409` shown as
-      "that seat has just been taken", the grid re-read every two seconds; see
-      [Two windows, one seat](#two-windows-one-seat)
-- [x] C4 system context and container diagrams, modelled in Structurizr DSL and rendered
-      to PNG; see [How it works](#how-it-works)
-
-**Planned, in order**
-- [ ] ADRs for the remaining [Decisions](#decisions), in MADR format (two so far, in
-      [docs/adr](docs/adr))
-
-## The problem
-
-An event has 200 seats. Hundreds of people press "book" on the same seat within the
-same second. A reservation that is not paid within 10 minutes expires and the seat
-returns to the pool. Payment confirmations arrive asynchronously, out of order, and
-occasionally twice.
-
-Three things have to hold:
-
-- exactly one booking wins a contested seat, and the losers get a clear `409`;
-- a message delivered twice takes effect once: a payment confirms once, and a duplicate
-  is never mistaken for a second payment;
+- exactly one booking wins a contested seat; the losers get a clear `409`;
+- a message delivered twice takes effect once;
 - if the worker dies mid-processing, nothing is lost and nothing is double-charged.
 
-Everything else in this repository is the machinery required to make those three
-statements true in production rather than on a laptop.
+![Two browser windows click the same seat at the same instant: one holds it, the other is told it was just taken](docs/images/seat-race.gif)
 
 ## How it works
-
-This is the target design; see [Status](#status) for what's built.
-
-**System context** — who uses Kvytok and what it talks to.
 
 <!-- c4:context:start -->
 ![C4 system context: the buyer, the organiser and the payment provider around Kvytok](docs/images/c4-system-context.png)
 <!-- c4:context:end -->
 
-**Containers** — what runs inside it. The Api and the Worker never call each other; they meet
-at the queue and the database.
-
 <!-- c4:containers:start -->
 ![C4 containers: the Api, the Worker and the Migrator with the database, the queue and Application Insights](docs/images/c4-containers.png)
 <!-- c4:containers:end -->
 
-The model is [workspace.dsl](docs/architecture/workspace.dsl), in Structurizr DSL; the images above are
-generated from it, not hand-edited: after changing the DSL, run `./scripts/sync-architecture.ps1`
-(needs Docker), which re-exports the C4-PlantUML sources in `docs/architecture/c4/`, renders
-`docs/images/c4-*.png` and updates this page. CI fails if the sources are out of date.
+The Api and the Worker never call each other; they meet at the queue and the database.
 
-**Api** — ASP.NET Core minimal APIs, organised as vertical slices: one folder per
-use case, each holding its endpoint, handler and data access. A contested seat is
-decided by a single conditional update (`SET Status = 'Held' WHERE Status = 'Free'`):
-SQL Server locks the row, so exactly one request changes it and the rest get `409`.
-Before that, a plain read of the seat's status turns away requests for a seat already
-taken. Under read committed snapshot it takes no lock and waits for none, so most of a
-burst never queues for the row; the update stays the arbiter for whoever still reads `Free`.
-Reservations carry a `rowversion`, since confirm, cancel and expire can race on them.
-Reserving a seat also schedules an "expiry due" message for the moment the hold runs out
-(`Reservation:HoldFor`: ten minutes here, thirty seconds in the demo environment). A
-payment arrives as a webhook, `POST /reservations/{id}/payments`, which only puts a
-message on the queue.
+- **Api** (ASP.NET Core, vertical slices). A contested seat is decided by one conditional
+  update, `SET Status = 'Held' WHERE Status = 'Free'`: SQL Server locks the row, one request
+  changes it, the rest get `409`. A filtered unique index (one active reservation per seat)
+  backs that up in the database itself. Before the update, a plain read of the seat's status
+  turns away requests for a seat already taken; under read committed snapshot it takes no lock,
+  so most of a burst never queues for the row. Reserving writes two outbox rows (created and
+  expiry) in the same transaction; they are published right after the commit, and a timer drains
+  whatever that missed.
+  A payment arrives as a webhook that only puts a message on the queue.
+- **Worker** (Container Apps, scaled by KEDA on queue length). Confirms paid reservations and
+  expires unpaid ones. Both are writes conditional on the reservation's `rowversion`, so a
+  payment racing an expiry has one winner. Each message id is recorded in the transaction of
+  the step it caused, so a duplicate is skipped. Failures retry with backoff, then dead-letter.
+- **Data and messaging.** Azure SQL (serverless) and Service Bus, reached through managed
+  identities: no connection secrets anywhere.
+- **Observability.** Application Insights with one trace from the Api across the queue to the
+  Worker, and a dashboard kept in Bicep. See [observability](docs/observability.md).
 
-**Worker** — a `BackgroundService` consuming the reservations queue: confirms paid
-reservations, expires unpaid ones, and ignores "reservation created", which is there only
-to wake it ([Decisions](#decisions)). Both leave `Held` through a write conditional on the
-reservation's `rowversion`, so when a payment lands while the expiry is in flight,
-whichever commits first decides and the other finds it is too late: a paid seat is never
-released, and a late payment never resurrects an expired reservation. A payment
-delivered twice is recognised by its message id, recorded in the same transaction as the
-step it took, and skipped. A step that fails is retried as a delayed copy of the message,
-2, 4, 8 and 16 seconds apart; the fifth failure, or a message no retry can help (a subject
-nobody handles, a body that is not its contract), goes to the dead-letter queue.
+The diagrams are generated from [workspace.dsl](docs/architecture/workspace.dsl) by
+`./scripts/sync-architecture.ps1` (needs Docker); CI fails if they are stale.
+The reasoning behind the choices (Service Bus over Storage Queues, an in-process HybridCache
+instead of Redis, Container Apps over AKS, and more) is in [docs/decisions.md](docs/decisions.md)
+and the [ADRs](docs/adr).
 
-**Data** — Azure SQL (serverless). Reservations and the transactional outbox live in
-the same database, so publishing an event and changing state happen in one transaction.
+## Run it locally
 
-**Messaging** — Azure Service Bus. The Api never calls the Worker; they share a
-message contract and nothing else.
-
-**Operations** — SQL, Service Bus and Application Insights reached through managed
-identities, with no connection secrets to store; the event list cached in process
-([Caching the event list](#caching-the-event-list)); Application Insights with distributed tracing across
-the queue boundary ([One trace across the queue](#one-trace-across-the-queue)), health endpoints `/health` and `/alive` on a port the public
-ingress does not route to.
-
-## Decisions
-
-- **Vertical slices rather than layers.** Each use case is one folder holding its
-  endpoint, handler and data access, so a change touches one place.
-- **Service Bus rather than Storage Queues or Event Grid.** Scheduled messages, which the
-  whole expiry path rests on (and the worker's retries, which are delayed copies), and a
-  built-in dead-letter queue with a delivery count. Storage Queues can only approximate a
-  schedule by hiding a message for up to seven days, and have no dead-letter queue, so the
-  five-attempt limit would be mine to build. Event Grid is for fan-out notifications, not work
-  queues. Duplicate detection and sessions, the usual reasons given, are not used: there is no
-  per-key ordering to preserve, and duplicate detection has to stay off (see the outbox below).
-  The namespace is Standard because that is what Aspire's `AddAzureServiceBus` provisions, not
-  by choice: nothing here needs more than Basic, which has no topics, sessions, transactions or
-  duplicate detection. Up to 2 November the bill shows Service Bus at $0.00, and only its
-  messaging-operations meter: the Standard base charge, billed hourly, has not appeared at all,
-  for reasons not yet understood. Until a full month's invoice says otherwise, assume it will,
-  and that Basic is where the saving is.
-- **"Reservation created" is published to wake the worker, not to tell it anything.** The
-  worker ignores its content. The Worker scales to zero and KEDA wakes it on queue length,
-  polled every 10 seconds, so a payment arriving at a cold worker waits for a poll plus a
-  container start before it is confirmed. Publishing on every reservation starts that wait
-  early. The bound: KEDA scales the worker back to zero five minutes after the queue empties,
-  so only payments within about five minutes of the reservation benefit, half of a ten-minute
-  hold. The demo shortens the hold to 30 seconds so expiry can be watched. With a 30-second
-  hold, every payment arrives within those five minutes. The price is a message and a wake-up on every reservation, including the ones
-  nobody pays. In the [relayed trace](#one-trace-across-the-queue) the handler takes 9 µs
-  and settling the message with the broker 56 ms, where the expiry's real work is 28 ms
-  against 24 ms to settle. The time saved has not been measured; it is intent, not a result. With a
-  minimum of one worker replica the message would have no job left and could go.
-- **Scheduled messages rather than a sweep for expiry.** The broker holds each expiry until
-  it is due, so there is no timer to own, and an expiry that finds the reservation already
-  confirmed doing nothing is the correct outcome rather than a missed case.
-- **An open payment webhook.** It is the one public endpoint besides booking that changes
-  state on request, and it is unauthenticated on purpose: the whole demo, pay one
-  reservation and watch the other expire, runs from the API reference page with nothing
-  to ask for. The data is test data, and the endpoint can only report a payment; the
-  worker decides what it means. A real provider would sign its calls and the endpoint
-  would verify the signature.
-- **The seat grid only books.** `POST /events` is as open as the webhook, and the
-  [seat grid](#two-windows-one-seat) could have offered it as a button. It does not: each click
-  would write an event and its seats into a free-offer database that pauses for the rest of the
-  month once its allowance is spent, and nothing rate-limits the endpoint. Making an event stays on
-  the API reference page; the grid lists upcoming events and books seats in one. Its two-second
-  re-read is an uncached query too, so a hidden tab stops polling and reads again when shown.
-- **The outbox relay runs inside the Api, not the Worker or a scheduled job.** An unpublished
-  row does harm only while someone wants that seat, and that person's request wakes the Api,
-  whose timer drains the outbox. Replicas claim disjoint batches under a lease, and startup
-  refuses a configuration whose recovery time does not fit inside the hold. Duplicate detection
-  stays off because it would drop the worker's retries. Only reserving goes through the outbox.
-  The payment webhook writes nothing, so it has no transaction to share: it sends straight to
-  the queue and answers `503` if it cannot, and the provider, which retries a webhook that did
-  not succeed, is what makes the payment durable. [ADR 0001](docs/adr/0001-outbox-relay-in-the-api.md)
-- **The worker's message key is checked under a lock, not by racing to insert it.** A second
-  copy of a message waits for the first and finds its record; racing to insert is also correct
-  but logs every harmless duplicate as an error. The cost is a measured ceiling of about 45
-  steps a second, because time-ordered ids put every range lock in one place.
-  [ADR 0002](docs/adr/0002-message-key-checked-under-a-lock.md)
-- **An in-process cache, not Redis.** The one cached read is the event list, which is not on
-  the path anyone is waiting on. A managed Redis would be the first thing in this architecture that
-  cannot scale to zero. [Caching the event list](#caching-the-event-list)
-- **Container Apps rather than App Service or AKS.** It runs the Api and a
-  queue-driven Worker side by side with scale-to-zero, without running a cluster.
-
-## Results
-
-Measured with [k6](tests/load/hot-seat.js) against the deployed environment (Sweden
-Central), from a laptop over the public internet. Each burst is a fresh event: every
-virtual user sleeps until the same instant, then sends one reservation for seat 1; the
-last request left within 21 ms of the first even at 800. Times are k6's
-`http_req_duration`, from the first byte sent to the last byte received. They leave out
-the TCP and TLS handshake but include one network round trip, which is most of the
-35–40 ms an uncontended `409` takes.
-
-Two versions were measured, each with the same series: four bursts of 200, then one burst
-each at 50 to 800. *Lock-first* (commit `2157c79`, measured 2026-10-28) learns that a seat is
-taken only from the conditional update, which first takes the row's update lock.
-*Read-first* (`9b4a6c5`, 2026-10-29) reads the seat's status before taking any lock and
-answers `409` there ([How it works](#how-it-works)). Raw summaries are in
-[tests/load/results](tests/load/results), one folder per version. Both predate the script
-recording the Api build in each summary, so the commits above were read from the Api's root
-endpoint at the time.
-
-| Scenario | Expected | Measured |
-| --- | --- | --- |
-| 200 concurrent bookings of one seat | 1 × `201`, 199 × `409`, no double booking | 1 × `201`, 199 × `409`, nothing else, 0 double bookings, in each of 8 runs across both versions |
-| p95 of a losing request, 200 contenders, Api scaled out | — | read-first 181–381 ms, lock-first 776–1395 ms; 35–69 ms uncontended |
-| p95 of a losing request, 200 contenders, one replica | — | read-first 1810 ms, lock-first 2120 ms |
-| Payment message delivered twice | one confirmation, repeat skipped | one confirmation, repeat skipped, both one after the other and at the same moment ([worker tests](tests/Kvytok.Worker.IntegrationTests/ReservationLifecycleTests.cs)); also checked by hand with a local worker against the dev Service Bus namespace |
-| Worker killed mid-batch | no lost messages | TODO: not yet tested against a running worker |
-
-The four bursts of 200, in order: read-first, with lock-first in brackets. The Api runs
-at 0.5 vCPU per replica and scales on the platform's default HTTP rule, from zero to at most
-three replicas:
-
-| Run | Api replicas | Loser p50 | Loser p95 | Loser max | Winner | Last answer |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | 1 | 1460 ms (1467) | 1810 ms (2120) | 1901 ms (2217) | 2009 ms (69) | 2087 ms (2368) |
-| 2 | 1, then 3 | 149 ms (532) | 381 ms (776) | 417 ms (782) | 104 ms (850) | 531 ms (937) |
-| 3 | 3 | 115 ms (492) | 285 ms (816) | 315 ms (863) | 77 ms (88) | 451 ms (987) |
-| 4 | 3 | 76 ms (287) | 181 ms (1395) | 250 ms (1550) | 102 ms (66) | 381 ms (1656) |
-
-Rising contention, one burst each, three replicas throughout: read-first, with lock-first
-in brackets:
-
-| Contenders | `201` / `409` / other | Loser p50 | Loser p95 | Loser max | Last answer | TLS handshake p95 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 50 | 1 / 49 / 0 | 43 ms (48) | 90 ms (91) | 117 ms (94) | 194 ms (186) | 62 ms |
-| 100 | 1 / 99 / 0 | 283 ms (119) | 1180 ms (864) | 1203 ms (940) | 1306 ms (1058) | 83 ms |
-| 200 | 1 / 199 / 0 | 76 ms (287) | 181 ms (1395) | 250 ms (1550) | 381 ms (1656) | 145 ms |
-| 400 | 1 / 399 / 0 | 214 ms (400) | 790 ms (1203) | 1030 ms (1482) | 1107 ms (1594) | 264 ms |
-| 800 | 1 / 799 / 0 | 510 ms (712) | 1053 ms (1431) | 1442 ms (1804) | 1655 ms (2048) | 537 ms |
-
-What the numbers say:
-
-- **Correct at every level, in both versions.** 4,300 attempts over sixteen bursts: exactly
-  one `201` per burst, every other answer a clean `409`, no timeouts, no `5xx`, and the seat
-  read back as `Held`.
-- **The row lock was the main cost at 200.** Lock-first, a loser learns the seat is taken only
-  from `UPDATE … WHERE Status = 'Free'`, which first takes an update lock on the one row;
-  update locks exclude each other, so losers are answered one at a time even after the
-  winner has committed. Read-first cut the p95 at 200 on three
-  replicas from 0.8–1.4 seconds to 0.18–0.29, and the median from 0.3–0.5 seconds to under
-  0.12. At 400 and 800 the p95 fell by a quarter to a third.
-- **Not yet as fast as an uncontended `409`.** The losing p95 is still 5–8 times the 35–40 ms
-  of a `409` with no one competing, and it keeps rising with contention. On a single replica
-  even the winner took 2 seconds, with no lock to wait for: the limit there is the replica,
-  half a vCPU taking 200 requests at once, and its pool of 100 SQL connections. That is the
-  likely remaining cost on three replicas too, unconfirmed until there is server-side tracing.
-- **Single bursts are noisy.** The one burst of 100 came out slower read-first than
-  lock-first (1.18 s against 0.86 s), and the four read-first bursts of 200 range from 181
-  to 381 ms once scaled out. The ladder shows the shape of the curve; a single row in it is
-  one sample.
-- **Scale-out does not help the burst that causes it.** In both versions the first burst found
-  one replica and had by far the worst p95. The replica count reached three by the end of the
-  second burst.
-- **Throughput, for completeness:** 800 answers in 1.66 seconds, about 480 a second
-  (lock-first: 390), on a single seat.
-- **Cold start.** After idle, the Api and serverless SQL are both at zero. The first request
-  took over a minute: the replica started, then failed its readiness probe until the
-  database resumed. The probe runs `/health`, which queries the database, with the platform's
-  default 1-second timeout, and a serverless database takes 30 to 60 seconds to resume, so
-  every check during the resume fails and the replica gets no traffic until one passes. The
-  resume itself is the floor. What the probe adds on top is configuration: a startup probe
-  with a generous failure threshold, separate from readiness, or a readiness check without
-  the database, which the [runbook](docs/deploy.md) already names as the first thing to drop.
-  Neither is applied or measured yet. The load test waits the cold start out before measuring.
-
-### Two windows, one seat
-
-![Two browser windows on the seat-grid page click seat 14 at the same instant: one turns green and holds it, the other shows "that seat has just been taken"](docs/images/seat-race.gif)
-
-Two windows on the [seat grid](src/Kvytok.Api/wwwroot/demo/index.html) click seat 14 at the same
-instant: two real `POST`s, sent together. The database decides. Here anna holds the seat and ben
-gets the `409`; which window wins changes from run to run. Midway, a third client books seats 4
-and 30, and both grids show them on their next two-second read. Then ben takes seat 15.
-Recorded against a local Api by [scripts/demo-gif](scripts/demo-gif/record.mjs), which creates
-a fresh event and drives both windows through Playwright.
-
-### One trace across the queue
-
-A payment against the deployed environment, as Application Insights shows it:
-
-![A payment's end-to-end transaction in Application Insights: the Api's request, the Service Bus send, and the Worker's handling of the message in one trace](docs/images/trace-payment.png)
-
-The Api accepts the payment (`202`) and puts a message on the queue. The Worker's
-`ProcessMessage` starts as the send ends, and its handling (`Handle PaymentReceived`, six
-SQL calls) and the message's completion sit inside the same operation, 173 ms from the
-request's first byte to the completion. In the raw telemetry the Worker's span has the
-message's span (`Message`, one per message, beside `ServiceBusSender.Send`) as its parent,
-and carries a link to it as well. The SDK's documentation describes the link; the parent
-is what puts both apps in one trace rather than two that point at each other. Three
-things make it so. The Azure SDK emits Service Bus spans only
-behind `Azure.Experimental.EnableActivitySource`, set in both apps. The sender stamps each
-message with its span (`Diagnostic-Id`). And `ServiceBusProcessor` continues from that
-stamp, where a hand-written receive loop would only have linked to it.
-
-The outbox would break the chain where it matters most. The in-process send runs inside
-the request, so it inherits the trace. The relay runs on a timer, so a message it sends
-late would start a trace of its own, cut off from the action that owed it. So the outbox
-row stores the request's span as a W3C `traceparent`, written in the same transaction,
-and the relay sends each row under an `OutboxRelay.Send` span parented to it. A message
-that went out late stays in its request's trace and shows that it was relayed. An
-integration test forces the immediate send to fail and checks that the relay's spans join
-the request's trace. The picture above is the immediate path, which needs none of this;
-the one below is a reservation whose immediate send was made to fail on purpose
-(`Outbox:FailImmediatePublish`, see [Exercising the relay](docs/deploy.md#exercising-the-relay)):
-
-![A reservation's trace in Application Insights: the request with the injected publish failure, then two OutboxRelay.Send spans, each with the message it sent and the Worker's handling of it](docs/images/trace-relayed.png)
-
-The request answers `201` and records the failure; both messages then go out under
-`OutboxRelay.Send`, inside the same trace. The portal's waterfall draws the Worker's spans
-at the wrong offsets, so the times are worth reading from the telemetry instead:
-
-| After the request | What happened |
-| --- | --- |
-| 0.02 s | the immediate publish fails; both rows stay owed |
-| 10.2 s | the relay sends both: the 5-second lease, then its next drain |
-| 23.5 s | the Worker handles "reservation created", having started from zero |
-| 30.07 s | the expiry is handled, on time for the 30-second hold despite the late send |
-
-The last row is the one that matters. The expiry message carries the time it is due, and
-the broker holds it until then. If the relay sent it late without that time, the broker
-would deliver it at once and release the seat while the holder could still pay. The trace
-shows the time surviving a late send once; an integration test checks it on every run,
-asserting that a relayed expiry is still due at the reservation's `ExpiresAt`.
-
-The expiry joins the reservation's trace on purpose: the reservation is what caused it.
-Its trace therefore lasts as long as the hold (thirty seconds in the demo environment,
-ten minutes by default). That is correct, but it reads like a slow request at first
-glance; the alternative, a new trace that links back, would hide the cause one click
-further away. That is why the first screenshot is a payment, which lasts milliseconds rather
-than a hold and does not use the outbox: a payment the Api cannot publish is refused with
-`503`, for the provider to retry.
-
-The longest bar is not the work. Settling the message (`ServiceBusReceiver.Complete`, a
-call to the broker) took 77 ms of `ProcessMessage`'s 128, against 50 ms for the handler
-and its six SQL calls. The same call took 24 ms in an earlier trace, so it is broker
-latency that varies from message to message, and on a fast handler it is most of the
-time a message spends in the Worker.
-
-Two things to know when reading these traces. The processor's
-`ServiceBusReceiver.Receive` spans are not exported: each is a long poll that measures
-time spent waiting for the queue, and shown beside a trace it stretches the timeline to
-its own length. And both apps scale to zero, so the first message after
-an idle period carries a gap while the Worker starts, plus a managed-identity token
-fetch (`GetToken`) in each app. The payment's trace is from warm replicas; the relayed one
-is not, which is its 23.5 s row.
-
-### The dashboard
-
-One Azure dashboard (`Kvytok` in the resource group) with three tiles, each a query on
-Application Insights in one-minute bins:
-
-- **Reservations per minute**, from a counter the Api adds to (`kvytok.reservations`): seats
-  held, and requests that found the seat already taken, stacked. A burst for one seat shows
-  as one hold on top of hundreds of `409`s.
-- **Reserve seat latency**: p50, p95 and p99 of `POST /events/{eventId}/reservations`, measured
-  in the Api, so without the network round trip that k6's numbers include.
-- **Errors per minute**, by app: failed requests and failed message handling. Application
-  Insights marks every `4xx` as failed, and a lost race is a `409`, so `4xx` is left out;
-  counted, a contended seat would look like an outage.
-
-The dashboard is Bicep ([dashboard.bicep](src/Kvytok.AppHost/dashboard.bicep)), added by the
-AppHost as a template, so it is provisioned with everything else and regenerated into `infra/`.
-Each tile defaults to the last four hours.
-
-### Caching the event list
-
-The plan said Redis cache-aside on the event list. What was built is smaller: `GET /events`
-(up to 100 upcoming events, soonest first) through .NET's `HybridCache` with no second layer,
-so each Api replica keeps its own copy in memory for 30 seconds.
-
-**Cached:** the event list, and only what in it is fixed when an event is created: id, name,
-start time, seat count. A stale copy can be missing an event but never wrong about one. Creating
-an event clears the copy on the replica that created it; the other replicas keep theirs until it
-runs out, so a new event can take up to 30 seconds to appear everywhere. An
-[integration test](tests/Kvytok.Api.IntegrationTests/Features/ListEventsTests.cs) pins both
-behaviours: a new event is listed at once, and one written past this replica is not.
-
-**Refused:**
-
-- **Seat status, and the free-seat count** (`GET /events/{eventId}`). It changes on every
-  reservation and every expiry. A stale `Free` sends someone into a `409`; a stale `Held` hides a
-  seat that came back.
-- **The status read in reserve.** It is the one read in the hot path, and the tempting one. Cached,
-  it saves a read under snapshot isolation that takes no lock and waits for none. A stale `Free`
-  would only fall through to the update, harmless and useless; a stale `Held` would turn a buyer
-  away from a seat that is free. The update decides who wins; this read only turns losers away
-  sooner, and only while it is current.
-- **Reservations** (`GET /reservations/{id}`). The worker changes them behind the Api's back, and
-  a client polls one to see `Confirmed`.
-
-What the cache does on its own endpoint: one request a second for 100 seconds made 13 queries in
-all, one per replica per 30 seconds, each about 2 ms. A hit takes 0.3 ms inside the Api. From the
-laptop both take 41 ms at the median, which is the network round trip. Each miss's query appears
-as a trace of its own, not under the request that missed: HybridCache runs the factory on behalf
-of every waiting caller, outside any one request's trace.
-
-**The decision is the part worth keeping.** The second layer is a configuration change away:
-register an `IDistributedCache` (`AddRedisDistributedCache` with a Redis resource in the
-AppHost) and HybridCache uses it with no change to the endpoint. It is not added. The smallest
-managed Redis on Azure is about $11–12 a month and runs all the time, against a measured
-steady state of about $5 a month for this whole deployment (see [Running it](#running-it)). It
-would be the first thing here that cannot scale to zero. What it would buy: one network call to
-Redis in place of a 2 ms query, the replicas sharing one copy, and a warm cache after a cold
-start, for a read that is not on the path anyone is waiting on. Worth revisiting if the event
-list ever becomes the hot path, or if the database becomes the bottleneck, and neither is true now.
-
-## Running it
-
-Locally, with .NET Aspire orchestrating the dependencies in containers:
+You need the .NET 10 SDK, Docker, and `az login` (Service Bus and Application Insights have no
+local stand-in, so Aspire provisions them in a resource group in your subscription; it asks
+for the subscription on the first run).
 
 ```
 dotnet run --project src/Kvytok.AppHost
 ```
 
-The Aspire dashboard lists every resource and its traces, and the seat grid is at `/demo/` on
-the Api. Only SQL Server runs in a
-container. Service Bus, Application Insights and [the dashboard](#the-dashboard) have no
-local stand-in here, so Aspire provisions them in a resource group of their own in your
-subscription, and this path needs `az login` and the subscription in the AppHost's
-user secrets (Aspire asks on the first run).
+SQL Server starts in a container. The Aspire dashboard lists every resource and its traces;
+the seat grid is at `/demo/` on the Api. Tests (`dotnet test`) run against a real SQL Server
+through Testcontainers.
 
-On Azure, with the Azure Developer CLI:
+## Deploy to Azure
 
 ```
 azd auth login
 azd up
 ```
 
-This provisions everything in `infra/` (Bicep), deploys the Api and the Worker, and
-runs the migrations job. Takes about 6 minutes: roughly 5 to provision, under 1 to
-deploy. `azd down` removes it all. Measured from the bill, 16 to 29 October: $7.86 in all, under the
-subscription's $20 monthly budget alert. Container Apps compute was $5.93 of it, up to $1.30 a
-day while the environment was being built, and under 5 cents a day from 27 October. The one
-steady charge is the Container Registry (Basic), 17 cents a day, about $5 a month. SQL (free
-offer), Service Bus and Log Analytics billed $0.00 ([cost notes](docs/deploy.md#cost)).
+About 6 minutes: roughly 5 to provision the Bicep in `infra/`, under 1 to deploy the Api and
+Worker and run the migrations job. `azd down` removes everything. The runbook runs `azd provision`
+and `azd deploy` separately, because packaging overlapping provisioning failed once; `azd up` is
+both in one go. Cost: the Container Registry is the one charge at rest, about $5 a month; Container
+Apps compute has been free since the Worker started scaling to zero. Invoice figures, failure modes and teardown are in the [runbook](docs/deploy.md).
 
-The load test needs [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/); `az`, if
-logged in, adds the Api's replica count to each result:
+## Load test
 
-```
-tests/load/run.sh                                    # 4 × 200, then 50 to 800; RESULTS_DIR to choose where
-k6 run -e CONTENDERS=200 tests/load/hot-seat.js      # one burst
-```
+[k6](tests/load/hot-seat.js) against the deployed environment, from a laptop: every virtual
+user waits for the same instant, then reserves seat 1 of a fresh event. Run it with
+`tests/load/run.sh`.
 
-## Not in scope
+| Contenders | Result | Losing request p95 |
+| --- | --- | --- |
+| 200 | 1 × `201`, 199 × `409` | 181 ms (3 replicas) |
+| 400 | 1 × `201`, 399 × `409` | 790 ms |
+| 800 | 1 × `201`, 799 × `409` | 1053 ms |
 
-- **No full front end.** The API reference page is the interface; there is a single
-  static page with a seat grid purely to make contention visible. This is a backend study.
-- **No authentication.** Identity would add a lot of surface and demonstrate nothing
-  the rest of the project does not already cover.
-- **Single region, no DR.** The naming and infrastructure assume one region on purpose;
-  multi-region would change the design and the bill without changing the lesson.
-- **No payment provider.** Payment confirmation is modelled as an incoming message.
-- **No Key Vault, because nothing here authenticates with a secret.** SQL, Service Bus
-  and Application Insights are all reached through managed identities (Service Bus and
-  Application Insights have local auth disabled), so there are no credentials to keep.
-  The Application Insights connection string each app receives only names the endpoint;
-  whether telemetry is accepted is decided by the app's Entra ID token. The one secret
-  that exists is the health probe key, a Container App secret that the platform's probe
-  configuration repeats in plain text anyway, because probe headers cannot reference
-  secrets. A vault with nothing in it would be decoration.
+- **Correct every time:** 4,300 attempts over 16 bursts, exactly one winner per burst, no
+  timeouts, no `5xx`, no double booking.
+- **Fast path matters:** reading the seat's status before taking the update lock cut the p95 at
+  200 contenders from 0.8–1.4 s to 0.18–0.38 s (median under 0.15 s).
+- **Not solved:** scale-out does not help the burst that triggers it (the first burst, on one
+  replica, had p95 of 1.8 s), and a cold start after idle takes over a minute while the
+  serverless database resumes.
+- **Not yet tested:** killing the worker mid-batch.
+
+Every table, the method and the caveats are in [docs/load-test.md](docs/load-test.md).
 
 ## Stack
 
-.NET 10 · ASP.NET Core minimal APIs · EF Core · .NET Aspire · Azure SQL · Azure
-Service Bus · Azure Container Apps · Application Insights · KEDA · Bicep · GitHub
-Actions · Testcontainers · k6 · HybridCache (in process)
+.NET 10 · ASP.NET Core minimal APIs · EF Core · .NET Aspire · Azure SQL · Service Bus · Container Apps ·
+Application Insights · HybridCache (in process) · KEDA · Bicep · GitHub Actions · Testcontainers · k6
+
+Deliberately out of scope: authentication, a full front end, multi-region, a real payment
+provider ([why](docs/decisions.md#not-in-scope)).
