@@ -350,15 +350,93 @@ The budget `Budget20` is scoped to the subscription, $20 a month, alerting at
 50 / 80 / 100 % by email. **A budget does not stop anything.** It is a
 notification, not a cap.
 
-The Container Registry (Basic) costs a flat few dollars a month regardless of
-use: 17 cents a day on the bill. The Service Bus namespace is Standard (Aspire's
-default, not a choice; nothing here needs more than Basic). Up to 2 November the bill
-showed only its messaging-operations meter, at $0.00; the Standard base charge, billed
-hourly, had not appeared at all, and why is not known. Check the November invoice for it
-once the month has closed, around 1 December 2026, before trusting the zero; if it is
-there, move to Basic. Container Apps compute is free up to a monthly grant and billed per second
-after it; both apps sit at min 0 replicas, so idle time is close to free. The API
-wakes on an HTTP request, the worker on a message ready in the queue.
+### What the October invoice shows
+
+Two product lines, Compute and Containers (read here as Container Apps and the Container
+Registry; the invoice gives only the category). Charges were $8.43: 1 to 23 October Compute
+$3.20 and Containers $1.10, then 24 to 31 October Compute $2.85 and Containers $1.28. A $4.30
+credit reversed the 1 to 23 October lines, so $4.13 was billed, all of it from 24 to 31
+October. The invoice does not say why they were credited. SQL (free offer) and Log Analytics
+billed $0.00.
+
+- **The registry is a flat $0.1666 a day**, which is $4.998 over 30 days: Basic at $5 a month,
+  prorated (meter "Basic Registry Unit"). Two October periods agree on the rate: 24 to 31 October
+  is $1.28 for 8 days, and 1 to 23 October is $1.10, about 7 days, which fits the first deploy
+  on 17 October, when the registry was created.
+- **Compute is a function of uptime, not load.** The platform's `Replicas` metric, summed per
+  day into replica-hours: the Worker ran 16.0 hours on 24 October, 24.0 on 25 October and 9.1 on
+  26 October (about 49 replica-hours), then about nothing afterwards. The Api never exceeded 1.2
+  hours in a day. The 24 to 31 October invoice line of $2.85 is that stretch: it matches the
+  earlier Cost Analysis reading of up to about $1.30 a day to 26 October and under 5 cents a day
+  from 27 October (the invoice gives only the eight-day total, so it cannot show the daily split
+  itself). The 28 to 29 October load tests were minutes of load and are not what the money paid for.
+- **A Container App with no HTTP ingress and no scale rule did not scale to zero**, whatever
+  `minReplicas` says. The Worker's Bicep already had `minReplicas: 0, maxReplicas: 1` throughout the
+  expensive days; what commit `df84407` added (25 October, 09:12 +0200, 07:12 UTC) was `pollingInterval: 10`
+  and the `azure-servicebus` rule on `messageCount: 1`. With no trigger for the platform to
+  evaluate, the replica stayed up (the Api scales down because ingress gives it a default HTTP
+  rule). The rule did nothing until it was deployed: the Container Apps are created by
+  `azd deploy`, not by `azd provision` (see the note near the top of this runbook), and the first
+  revision after the commit, `worker--0000002`, was created on 26 October at 08:55 UTC, about 26
+  hours after the commit. That is when the replica-hours stop, and two independent sources agree:
+  midnight to 08:55 is 8.9 hours, against the metric's 9.1 for that day (the residue is the old
+  revision draining). So the $2.85 is what the gap between writing a scale rule and
+  deploying it cost, and the Worker has been at about zero since.
+- **What bills is uptime beyond the monthly grant.** Compute is free up to a monthly grant and
+  billed per second after it. October's was already spent by the build-out (1 to 23 October carried
+  $3.20 of compute, credited back, which a free grant would not have produced), so the 49
+  replica-hours billed. November's grant is fresh, so even the 10 November run, about 1,430
+  reservation requests (271 `201`, 1,159 `409`) and 252 worker messages over about 15 minutes,
+  with the Api up 1.2 replica-hours and the Worker 0.4, produced no Container Apps charge (no
+  meter at all, 1 to 13 November). That evidence is request telemetry (the `AppRequests` table in
+  the Log Analytics workspace, not the `requests` view, which is empty). The run was not
+  `hot-seat.js`, which books one seat per event and can only produce one `201` per burst, and no
+  summaries of it were kept in the repository.
+- **Why the database was awake on days nobody was working.** The vCore meter shows the database
+  awake on 1, 2, 3, 4, 7, 9, 10 and 11 November. On 2, 3, 4, 10 and 11 that was the work above.
+  On 7 November someone opened the Api reference (`/`, `/scalar`, `/openapi/v1.json`) for two
+  seconds, and nothing else: no `POST`. On 1 November at 12:28 UTC and 9 November at 00:47 UTC the
+  Api started with no logged request at all. On 1 November it failed three connection attempts
+  while the serverless database resumed, then ran its outbox relay for about four minutes. The
+  relay is the Api's timer, and a query every few seconds keeps the database from pausing, so any
+  wake of the Api costs a few minutes of free database time. What starts the Api with no request
+  is not known. The client country on every row is Sweden, so it does not identify callers.
+- **Container Instances**, $0.0015 on 4 November only (vCPU and memory duration meters). Which
+  resource ran is not identified; Cost Analysis grouped by resource for that day would name it.
+
+### Service Bus namespaces: not billed
+
+Aspire's `AddAzureServiceBus` provisions a Standard namespace, and nothing here needs more
+than Basic. `infra/messaging/messaging.module.bicep` defaults to `Standard` with no override.
+Standard has an hourly base charge, yet neither the October invoice nor November's Cost
+Analysis shows one. Grouped by meter, the only Service Bus meter present is Standard Messaging
+Operations, at $0.00 on each of 1 to 13 November. There is no base-unit meter at all, not even
+at zero, so the base charge is not being emitted for these namespaces. The subscription is
+pay-as-you-go (`PayAsYouGo_2014-09-01`, spending limit off), so a trial or student offer does not
+explain it, and neither does the $4.30 October credit, which reversed only the 1 to 23 October
+Compute and Containers lines. The cause is unknown.
+
+On 14 November `az servicebus namespace list` showed three Standard namespaces, which were all
+alive for 1 to 13 November:
+
+| Resource group | Created (UTC) | What it was |
+| --- | --- | --- |
+| `rg-aspire-kvytokapphost-bfb3e14c` | 23 Oct 11:31 | Aspire provisioning for a local run; deleted 14 November |
+| `rg-kvytok-dev` | 24 Oct 09:25 | the deployed environment (commit 6ec7361) |
+| `rg-aspire-kvytokapphost-2e1f7977` | 30 Oct 18:48 | Aspire provisioning for a local run; the one the AppHost's user secrets name (`Azure:ResourceGroup`) |
+
+Aspire's resource groups persist after a local run until deleted, and each holds its own
+Service Bus namespace, Application Insights and Log Analytics workspace, so deleting a group
+also deletes any local-run traces in it. The two Aspire groups come from two provisioning
+identities, at most one still in use. To list what is left:
+
+```
+az servicebus namespace list --query "[].{name:name,rg:resourceGroup,sku:sku.name,created:createdAt}" -o table
+```
+
+This is Cost Analysis, not an invoice, and the data is still moving: the registry's line for 13 November read $0.1180 in one export (17 hours of the daily rate) and $0.1458 in one taken
+later (21 hours). The November invoice (around 1 December 2026) is the final
+check, and if a base charge does appear, move to Basic.
 
 The database is on the free offer (`useFreeLimit: true`, `GP_S_Gen5`) with
 `freeLimitExhaustionBehavior: AutoPause` — when the monthly allowance is spent
