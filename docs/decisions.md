@@ -64,6 +64,7 @@ decision and what is out of scope. The design itself is in [How it works](../REA
   cannot scale to zero. [Caching the event list](#caching-the-event-list)
 - **Container Apps rather than App Service or AKS.** It runs the Api and a
   queue-driven Worker side by side with scale-to-zero, without running a cluster.
+  [ADR 0003](adr/0003-container-apps-not-app-service-or-aks.md)
 
 
 ## Caching the event list
