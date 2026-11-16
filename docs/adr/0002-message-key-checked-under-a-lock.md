@@ -64,7 +64,7 @@ Correctness is covered by the worker's integration tests, including
 `The_Same_Message_Delivered_Twice_At_Once_Is_Handled_Once` and
 `A_Delivery_Held_Up_By_Another_Times_Out_Then_Retries`.
 
-## Pros and Cons of the Options
+## Why not the alternatives
 
 ### Insert the key and catch the unique-key violation
 

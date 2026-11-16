@@ -56,6 +56,16 @@ A lost publish stays lost for up to the lease, plus one drain interval, plus one
 fit inside the hold, and startup refuses a configuration where it does not. The 30-second demo
 hold runs with a 5-second lease: 5 + 10 + 4 = 19 seconds.
 
+* 5 is the lease. The relay leaves a row alone until it is that old, so the request's own send
+  has time to finish; it is also how long a replica that died mid-drain holds its claim.
+* 10 is the drain interval. A row that becomes claimable just after a drain waits up to a full
+  interval for the next one.
+* 4 is the send limit: the lease (or the 10-second publish timeout, if that is shorter) less the
+  one second kept for recording the row as sent.
+
+This is the worst case. In the relayed trace the relay sent both messages at the first drain
+after the lease, 10.2 s after the request.
+
 ### Consequences
 
 * Good, because there is no extra process to deploy, scale or pay for.
@@ -65,11 +75,29 @@ hold runs with a 5-second lease: 5 + 10 + 4 = 19 seconds.
 * Bad, because duplicates can still happen at the edges: a cut-off send the broker had already
   accepted, or a record that fails to land. The consumer absorbs them (see
   [ADR 0002](0002-message-key-checked-under-a-lock.md)).
+* Bad, because duplicate detection on the queue must stay off. It would catch the edge
+  duplicates a layer earlier, but it would also drop the worker's retries, which are copies of
+  the message under the same id. `requiresDuplicateDetection` cannot be changed on an existing
+  queue, so this decision rules the option out until the queue is recreated
+  ([deploy.md](../deploy.md)).
 
-## Pros and Cons of the Options
+### Confirmation
+
+* Startup refuses a configuration whose recovery time does not fit the hold. The 30-second demo
+  hold with a 5-second lease passes: 5 + 10 + 4 = 19 seconds.
+* An Api integration test, `A_Relayed_Message_Continues_The_Trace_Of_The_Request_That_Owed_It`,
+  forces the immediate publish to fail and checks that the relay's spans join the request's
+  trace.
+* The relayed trace in [observability.md](../observability.md) shows the outcome: the relay sends
+  both messages 10.2 s after the request, and the expiry is still handled on time, at 30.07 s
+  for the 30-second hold.
+
+## Why not the alternatives
 
 ### A relay inside the Worker
 
+* Good, because the queue code already lives there, and the Api would stay free of a background
+  timer.
 * Bad, because KEDA wakes the Worker on messages in the queue, and creating those messages is
   the relay's job. A scheduled expiry is not counted until it falls due, so nothing would wake
   the Worker to send it.
@@ -84,9 +112,3 @@ hold runs with a 5-second lease: 5 + 10 + 4 = 19 seconds.
 
 * Good, because the timer always runs.
 * Bad, because it gives up scale-to-zero and pays for an idle replica around the clock.
-
-## More Information
-
-Duplicate detection on the queue would catch the edge duplicates one layer earlier, but it
-would also drop the worker's retries, which are copies of the message under the same id, so it
-stays off.
